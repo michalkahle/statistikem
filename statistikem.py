@@ -50,27 +50,27 @@ def univariate_test(var, grouping, df=None, plot=True, scale=None, **kwa):
         raise Exception(f'Unknown scale: {scale}')
     return res
 
-def _split_to_groups(data, na, grouping, labels):
-    if isinstance(labels, pd.Series) and labels.dtype.name == 'category':
-        g_names = labels.cat.categories
-        gg = [data[labels == name] for name in g_names]
+def _split_to_groups(var_nona, na, grouping, grp_nona):
+    if isinstance(grp_nona, pd.Series) and grp_nona.dtype.name == 'category':
+        g_names = grp_nona.cat.categories
+        gg = [var_nona[grp_nona == name] for name in g_names]
         g_missing = [na[grouping == name].sum() for name in g_names]
     else:
-        glu = np.sort(labels.unique())
+        glu = np.sort(grp_nona.unique())
         if hasattr(grouping, 'name'):
             g_names = [grouping.name + ':' + str(g) for g in glu]
         else:
             g_names = ['group' + ':' + str(g) for g in glu]
-        gg = [data[labels == g] for g in glu]
+        gg = [var_nona[grp_nona == g] for g in glu]
         g_missing = [na[grouping == g].sum() for g in glu]
     return g_names, gg, g_missing
 
 
 def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa):
     na = var.isna()
-    data = var[~ na]
-    labels = grouping[~ na]
-    g_names, gg, g_missing = _split_to_groups(data, na, grouping, labels)
+    var_nona = var[~ na]
+    grp_nona = grouping[~ na]
+    g_names, gg, g_missing = _split_to_groups(var_nona, na, grouping, grp_nona)
     n_groups = len(gg)
         
     tests = [['test', 'p-value']]
@@ -97,7 +97,7 @@ def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa
         distribution = None
         
     if not all(possibly_normal) and all(possibly_lognormal):
-        warnings.warn('All groups possibly lognormal. Tests not implemented, yet!')
+        warnings.warn(f'{var.name}: all groups possibly lognormal. Tests not implemented, yet!')
     
     
     
@@ -142,11 +142,11 @@ def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa
         ax0.set_title(var.name, loc='left')
         table = [
             [None] + list(g_names) + ['Total'],
-            ['n'] + [len(g) for g in gg] + [len(data)],
+            ['n'] + [len(g) for g in gg] + [len(var_nona)],
             ['missing'] + list(g_missing) + [na.sum()],
-            ['median'] + [np.median(g) for g in gg] +[np.median(data)],
-            ['mean'] + [np.mean(g) for g in gg] + [np.mean(data)],
-            ['SD'] + [np.std(g) for g in gg] + [np.std(data)],
+            ['median'] + [np.median(g) for g in gg] +[np.median(var_nona)],
+            ['mean'] + [np.mean(g) for g in gg] + [np.mean(var_nona)],
+            ['SD'] + [np.std(g) for g in gg] + [np.std(var_nona)],
         ]
         style = [[None] * len(table[0])] * len(table)
 #         style = [[None] + [f'fc_C{x}' for x in range(n_groups)] + [None]]
@@ -162,14 +162,14 @@ def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa
         if scale == 'continuous':
             _, loc, _ = ax1.hist(gg, rwidth=1.0)
             binwidth = loc[1] - loc[0]
-            X = np.linspace(data.min(), data.max(), 20)
+            X = np.linspace(var_nona.min(), var_nona.max(), 20)
             for ii, g in enumerate(gg):
                 normal, lognormal = possibly_normal[ii], possibly_lognormal[ii]
                 if normal:
                     Y = stats.norm.pdf(X, loc=g.mean(), scale=g.std()) * len(g) * binwidth
                     ax1.plot(X, Y, color=f'C{ii}')
         elif scale == 'categorical':
-            counts = data.groupby([data,labels]).count().unstack().T
+            counts = var_nona.groupby([var_nona,grp_nona]).count().unstack().T
             _plot_bars(counts, ax1)
         else:
             raise Exception(f'unknown scale: {scale}')
@@ -180,7 +180,7 @@ def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa
         ax2.set_title('Q-Q normal~sample')
         ax2.get_xaxis().label.set_visible(False)
         ax2.get_yaxis().label.set_visible(False)
-        sm.qqplot(data, line='s', ax=ax2, markerfacecolor='none', markeredgecolor='black')
+        sm.qqplot(var_nona, line='s', ax=ax2, markerfacecolor='none', markeredgecolor='black')
         
         ax3 = fig.add_subplot(spec[0,3])
         table = plot_table(tests, style=tests_style, ax=ax3)
@@ -190,54 +190,36 @@ def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa
 
 def univariate_frequency_test(var, grouping, plot=True, res={}, **kwa):
     na = var.isna()
-    data = var[~ na]
-    labels = grouping[~ na]
-    g_names, gg, g_missing = _split_to_groups(data, na, grouping, labels)
+    var_nona = var[~ na]
+    grp_nona = grouping[~ na]
+    g_names, gg, g_missing = _split_to_groups(var_nona, na, grouping, grp_nona)
     n_groups = len(gg)
-        
+    
     tests = [['test', 'p-value']]
     tests_style = [['bold center'] * 2]
-    
-    
-    
-    
-    
-    
-    obs = np.array(
-        [[np.sum(group == val) for group in gg] for val in data.unique()])
-    chi2_valid = '' if np.min(obs) >= 5 else 'fc_pink'
-    
-    
-    
-    
-    counts = data.groupby([data,labels]).count().unstack()
+    counts = pd.crosstab(var_nona, grp_nona)
     chi2_valid = '' if counts.values.min() >= 5 else 'fc_pink'
-    
-    
-    
-    
-    
 
-    test = 'Pearson chi^2'
-    chi2, p, dof, exp = stats.chi2_contingency(obs, correction=False)
-    res['test'], res['p'] = test, p
-    tests.append([r'$\chi^2$ Pearson', p])
-    tests_style.append([chi2_valid, 'fc_pink' if p < ALPHA else ''])
+    if var_nona.unique().shape[0] > 1:
+        test = 'Pearson chi^2'
+        chi2, p, dof, exp = stats.chi2_contingency(counts, correction=False)
+        res['test'], res['p'] = test, p
+        tests.append([r'$\chi^2$ Pearson', p])
+        tests_style.append([chi2_valid, 'fc_pink' if p < ALPHA else ''])
 
-    test = 'Yates chi^2'
-    chi2, p, dof, exp = stats.chi2_contingency(obs, correction=True)
-    res['test'], res['p'] = test, p
-    tests.append([r'$\chi^2$ Yates', p])
-    tests_style.append([chi2_valid, 'fc_pink' if p < ALPHA else ''])
+        test = 'Yates chi^2'
+        chi2, p, dof, exp = stats.chi2_contingency(counts, correction=True)
+        res['test'], res['p'] = test, p
+        tests.append([r'$\chi^2$ Yates', p])
+        tests_style.append([chi2_valid, 'fc_pink' if p < ALPHA else ''])
 
-    test = 'Fisher exact'
-    oddsratio, p = stats.fisher_exact(obs, alternative='two-sided')
-    res['test'], res['p'] = test, p
-    tests.append([test, p])
-    tests_style.append(['', 'fc_pink' if p < ALPHA else ''])
-    tests.append(['odds ratio', oddsratio])
-    tests_style.append([None, None])
-    
+        test = 'Fisher exact'
+        oddsratio, p = stats.fisher_exact(counts, alternative='two-sided')
+        res['test'], res['p'] = test, p
+        tests.append([test, p])
+        tests_style.append(['', 'fc_pink' if p < ALPHA else ''])
+        tests.append(['odds ratio', oddsratio])
+        tests_style.append([None, None])
     
     if plot:
         fig = plt.figure(figsize=FIGSIZE, constrained_layout=True)
@@ -248,28 +230,31 @@ def univariate_frequency_test(var, grouping, plot=True, res={}, **kwa):
         tdata = [[''  ,   g_names[0], g_names[1], 'Total']]
         tstyle = [[None, 'fc_C0', 'fc_C1', 'normal']]
         warn = lambda x: 'fc_pink' if x < 5 else ''
-        for ii, val in enumerate(data.unique()):
-            tdata.append([val, obs[ii,0], obs[ii,1], obs[ii,:].sum()])
-            tstyle.append(['', warn(obs[ii,0]), warn(obs[ii,1]), ''])
-        tdata.append(['Total', obs[:,0].sum(), obs[:,1].sum(), obs.sum()])
+        sums = counts.sum()
+        total = sums.sum()
+        perc = lambda x: f'{x} ({x / total * 100:2.0f}%)'
+        for val, row in counts.iterrows():
+            tdata.append([val, perc(row[0]), perc(row[1]), perc(row.sum())])
+            tstyle.append(['', 'right ' + warn(row[0]), 'right ' + warn(row[1]), 'right'])
+        tdata.append(['Total', perc(sums[0]), perc(sums[1]), perc(total)])
+        tstyle.append(['right', 'right ', 'right', 'right'])
         table = plot_table(tdata, style=tstyle, loc='full', ax=ax0, colWidths=[1,1,1,1])
         table.auto_set_font_size(False)
         table.set_fontsize(FONTSIZE)
 
         ax1 = fig.add_subplot(spec[0,1])
-        counts = data.groupby([data,labels]).count().unstack().T
-        _plot_bars(counts, ax1)
+        _plot_bars(counts.T, ax1)
 
         ax2 = fig.add_subplot(spec[:,2])
         ax2.set_title('Observed vs Expected')
-        counts = data.groupby([data,labels]).count().unstack().T
-        sums = counts.sum()
-        ax2.plot([0, sums[0]], [0, sums[1]], color='black')
-        for ii, group in counts.iterrows():
-            ax2.plot(group[0], group[1], 'o')
-        ax2.set_aspect('equal', adjustable='box')
-        ax2.set_xlabel(sums.index[0])
-        ax2.set_ylabel(sums.index[1])
+        sums = counts.sum(axis=1)
+        if sums.shape[0] > 1:
+            ax2.plot([0, sums[0]], [0, sums[1]], color='black')
+            for ii, col in counts.T.iterrows():
+                ax2.plot(col[0], col[1], 'o')
+            ax2.set_aspect('equal', adjustable='box')
+            ax2.set_xlabel(sums.index[0])
+            ax2.set_ylabel(sums.index[1])
 
         ax3 = fig.add_subplot(spec[:,3])
         table = plot_table(tests, style=tests_style, ax=ax3)
@@ -317,6 +302,8 @@ def plot_table(cells, style=None, global_style=None,
         'bold' : {'fontproperties' : {'weight' : 'bold'}},
         'normal' : {'fontproperties' : {'weight' : 'normal'}},
         'center' : {'loc' : 'center'},
+        'left' : {'loc' : 'left'},
+        'right' : {'loc' : 'right'},
         'open' : {'edges' : 'open'},
         'closed' : {'edges' : 'closed'}
     }
