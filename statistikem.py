@@ -30,16 +30,19 @@ def univariate_tests(var_list, grouping, df, plot=True, scales={},
     return res_df
 
 def univariate_test(var, grouping, df=None, plot=True, scale=None, **kwa):
-    if df is not None:
-        varname = var
-        # groupname = grouping
-        var = df[var]
-        grouping = df[grouping]
-    else:
-        varname = var.name
+    if type(var) != pd.Series:
+        if df is not None:
+            var = df[var]
+        else:
+            raise ValueError('`var` should be a Series. Alternatively `df` should be passed.')
+    if type(grouping) != pd.Series:
+        if df is not None:
+            grouping = df[grouping]
+        else:
+            raise ValueError('`grouping` should be a Series. Alternatively `df` should be passed.')
     if not scale:
         scale = _guess_scale(var)
-    res = dict(var=varname, scale=scale)
+    res = dict(var=var.name, scale=scale)
     if scale == 'binary':
         res = univariate_frequency_test(var, grouping, plot=plot, res=res, **kwa)
     elif scale == 'categorical':
@@ -49,21 +52,6 @@ def univariate_test(var, grouping, df=None, plot=True, scale=None, **kwa):
     else:
         raise Exception(f'Unknown scale: {scale}')
     return res
-
-def _split_to_groups(var_nona, na, grouping, grp_nona):
-    if isinstance(grp_nona, pd.Series) and grp_nona.dtype.name == 'category':
-        g_names = grp_nona.cat.categories
-        gg = [var_nona[grp_nona == name] for name in g_names]
-        g_missing = [na[grouping == name].sum() for name in g_names]
-    else:
-        glu = np.sort(grp_nona.unique())
-        if hasattr(grouping, 'name'):
-            g_names = [grouping.name + ':' + str(g) for g in glu]
-        else:
-            g_names = ['group' + ':' + str(g) for g in glu]
-        gg = [var_nona[grp_nona == g] for g in glu]
-        g_missing = [na[grouping == g].sum() for g in glu]
-    return g_names, gg, g_missing
 
 
 def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa):
@@ -139,9 +127,9 @@ def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa
         spec = fig.add_gridspec(1, 4, width_ratios=WIDTH_RATIOS)
         
         ax0 = fig.add_subplot(spec[0,0])
-        ax0.set_title(var.name, loc='left')
+        ax0.set_title(f'{var.name} \ {grouping.name}', loc='left')
         table = [
-            [None] + list(g_names) + ['Total'],
+            [None] + list(g_names) + ['total'],
             ['n'] + [len(g) for g in gg] + [len(var_nona)],
             ['missing'] + list(g_missing) + [na.sum()],
             ['median'] + [np.median(g) for g in gg] +[np.median(var_nona)],
@@ -226,8 +214,8 @@ def univariate_frequency_test(var, grouping, plot=True, res={}, **kwa):
         spec = fig.add_gridspec(1, 4, width_ratios=WIDTH_RATIOS)
 
         ax0 = fig.add_subplot(spec[0,0])
-        ax0.set_title(var.name, loc='left')
-        tdata = [[''  ,   g_names[0], g_names[1], 'Total']]
+        ax0.set_title(f'{var.name} \ {grouping.name}', loc='left')
+        tdata = [[''  ,   g_names[0], g_names[1], 'total']]
         tstyle = [[None, 'fc_C0', 'fc_C1', 'normal']]
         warn = lambda x: 'fc_pink' if x < 5 else ''
         sums = counts.sum()
@@ -236,8 +224,8 @@ def univariate_frequency_test(var, grouping, plot=True, res={}, **kwa):
         for val, row in counts.iterrows():
             tdata.append([val, perc(row[0]), perc(row[1]), perc(row.sum())])
             tstyle.append(['', 'right ' + warn(row[0]), 'right ' + warn(row[1]), 'right'])
-        tdata.append(['Total', perc(sums[0]), perc(sums[1]), perc(total)])
-        tstyle.append(['right', 'right ', 'right', 'right'])
+        tdata.append(['total', perc(sums[0]), perc(sums[1]), perc(total)])
+        tstyle.append(['', 'right ', 'right', 'right'])
         table = plot_table(tdata, style=tstyle, loc='full', ax=ax0, colWidths=[1,1,1,1])
         table.auto_set_font_size(False)
         table.set_fontsize(FONTSIZE)
@@ -318,7 +306,9 @@ def plot_table(cells, style=None, global_style=None,
             
             # format cell contents
             cell = cells[rn, cn]
-            if isinstance(cell, str):
+            if cell is None:
+                text = ''
+            elif isinstance(cell, str):
                 text = cell
                 ckw['loc'] = 'left'
             elif isinstance(cell, float):
@@ -401,3 +391,34 @@ def fix_column_names(df):
     # transtable = ''.maketrans(' .', '__')
     regex = re.compile(r'\W+')
     df.columns = [regex.sub('_', col).strip('_')  for col in df.columns]
+
+def _split_to_groups(var_nona, na, grouping, grp_nona):
+    if isinstance(grp_nona, pd.Series) and grp_nona.dtype.name == 'category':
+        g_names = grp_nona.cat.categories
+        gg = [var_nona[grp_nona == name] for name in g_names]
+        g_missing = [na[grouping == name].sum() for name in g_names]
+    else:
+        glu = np.sort(grp_nona.unique())
+        g_names = [str(g) for g in glu]
+        gg = [var_nona[grp_nona == g] for g in glu]
+        g_missing = [na[grouping == g].sum() for g in glu]
+    return g_names, gg, g_missing
+
+def ci_mean(series, level=0.95):
+    mean = series.mean()
+    q = (level + 1) / 2
+    hci = series.sem() * stats.t.ppf(q, len(series))
+    return {'mean' : mean, 'min' : mean - hci, 'max' : mean + hci}
+
+# Ulf Olsson (2005) Confidence Intervals for the Mean of a Log-Normal Distribution, Journal of Statistics Education, 13:1
+def ci_mean_lognormal(x, level=0.95):
+    n = len(x)
+    y = np.log(x)
+    var_y = np.var(y, ddof=1)
+    ln_mean = np.mean(y) + var_y / 2
+    q = (level + 1) / 2
+    ln_sem = np.sqrt(var_y / n + var_y**2 / 2 / (n - 1))
+    hci = stats.t.ppf(q, len(y)) * ln_sem
+    return {'mean' : np.exp(ln_mean), 
+            'min'  : np.exp(ln_mean - hci), 
+            'max'  : np.exp(ln_mean + hci)}
