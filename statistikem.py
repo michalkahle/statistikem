@@ -13,15 +13,20 @@ WIDTH_RATIOS=(4,2,2,2)
 FONTSIZE = 10
 ALPHA = 0.05
 
-def univariate_tests(var_list, grouping, df, plot=True, scales={}, 
-                     filter=None, sort=None, **kwa):
+def compare(var_list, grouping=None, df=None, plot=True, scales=None, sort=None, **kwa):
+    if type(var_list) == str:
+        var_list = [var_list]
+    if type(scales) == str:
+        scales = [scales] * len(var_list)
+    elif type(scales) == list:
+        scales = scales + [None] * (len(var_list - len(scales)))
+    else:
+        scales = [None] * len(var_list)
     ll = []
     orig_mow = plt.rcParams['figure.max_open_warning'] = 0
-    for varname in var_list:
-        var = df[varname]
-        scale = scales.get(varname, _guess_scale(var))
-        if not filter or filter == scale:
-            res = univariate_test(var, df[grouping], plot=plot, scale=scale, **kwa)
+    for var, scale in zip(var_list, scales):
+        if var != grouping:
+            res = compare_one(var, grouping, df=df, plot=plot, scale=scale, **kwa)
             ll.append(res)
     plt.rcParams['figure.max_open_warning'] = orig_mow
     res_df = pd.DataFrame(ll)
@@ -29,36 +34,36 @@ def univariate_tests(var_list, grouping, df, plot=True, scales={},
         res_df = res_df.sort_values(sort)
     return res_df
 
-def univariate_test(var, grouping, df=None, plot=True, scale=None, **kwa):
-    if type(var) != pd.Series:
-        if df is not None:
-            var = df[var]
+def compare_one(var, grouping=None, df=None, plot=True, scale=None, **kwa):
+    if type(var) == list:
+        var = df[var]
+    if type(var) == pd.DataFrame:
+        if not scale:
+            scale = _guess_scale(var.values.flatten())
+        if scale == 'binary':
+            res = paired_proportion_test(var,plot=plot, scale=scale, **kwa)
+        elif scale == 'categorical' or scale == 'continuous':
+            res = paired_difference_test(var, plot=plot, scale=scale, **kwa)
         else:
-            raise ValueError('`var` should be a Series. Alternatively `df` should be passed.')
-    if type(grouping) != pd.Series:
-        if df is not None:
-            grouping = df[grouping]
-        else:
-            raise ValueError('`grouping` should be a Series. Alternatively `df` should be passed.')
-    if not scale:
-        scale = _guess_scale(var)
-    res = dict(var=var.name, scale=scale)
-    if scale == 'binary':
-        res = univariate_frequency_test(var, grouping, plot=plot, res=res, **kwa)
-    elif scale == 'categorical':
-        res = univariate_location_test(var, grouping, plot=plot, res=res, scale='categorical', **kwa)
-    elif scale == 'continuous':
-        res = univariate_location_test(var, grouping, plot=plot, res=res, scale='continuous', **kwa)
+            raise Exception(f'Unknown scale: {scale}')
     else:
-        raise Exception(f'Unknown scale: {scale}')
+        var = _get_series(var, df)
+        grouping = _get_series(grouping, df)
+        if not scale:
+            scale = _guess_scale(var)
+
+        if scale == 'binary':
+            res = unpaired_proportion_test(var, grouping, plot=plot, scale=scale, **kwa)
+        elif scale == 'categorical' or scale == 'continuous':
+            res = unpaired_difference_test(var, grouping, plot=plot, scale=scale, **kwa)
+        else:
+            raise Exception(f'Unknown scale: {scale}')
     return res
 
-
-def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa):
-    na = var.isna()
-    var_nona = var[~ na]
-    grp_nona = grouping[~ na]
-    g_names, gg, g_missing = _split_to_groups(var_nona, na, grouping, grp_nona)
+def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
+    res = {'formula': f'{var.name} ~ {grouping.name}', 
+           'scale': scale}
+    na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(var, grouping)
     n_groups = len(gg)
         
     tests = [['test', 'p-value']]
@@ -84,19 +89,14 @@ def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa
     else:
         distribution = None
         
-    if not all(possibly_normal) and all(possibly_lognormal):
+    if distribution == 'lognormal':
         warnings.warn(f'{var.name}: all groups possibly lognormal. Tests not implemented, yet!')
-    
-    
-    
-    
-    
     
     if n_groups == 1:
         raise NotImplementedError('Just one group.')
     elif n_groups == 2:
         # Levene test for equal variances
-        center = 'mean' if np.all(possibly_normal) else 'median'
+        center = 'mean' if distribution == 'normal' else 'median'
         s_levene, p_levene = stats.levene(*gg, center=center)
         equal_var = p_levene > ALPHA
         tests.append(['Levene', p_levene])
@@ -108,11 +108,11 @@ def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa
         tests_style.append(['', 'fc_pink' if p_t < ALPHA else ''])
         
         # Mann-Whitney U test
-        s_mw, p_mw = stats.mannwhitneyu(gg[0], gg[1], alternative='two-sided', use_continuity=False)
+        s_mw, p_mw = stats.mannwhitneyu(gg[0], gg[1], alternative='two-sided', use_continuity=scale=='categorical')
         tests.append(['Mann-Whitney', p_mw])
         tests_style.append(['', 'fc_pink' if p_mw < ALPHA else ''])
         
-        if np.all(possibly_normal):
+        if distribution == 'normal':
             res['test'] = 't'
             res['p'] = p_t
         else:
@@ -123,64 +123,186 @@ def univariate_location_test(var, grouping, plot=True, res={}, scale=None, **kwa
         pass
     
     if plot:
-        fig = plt.figure(figsize=FIGSIZE, constrained_layout=True)
-        spec = fig.add_gridspec(1, 4, width_ratios=WIDTH_RATIOS)
-        
-        ax0 = fig.add_subplot(spec[0,0])
-        ax0.set_title(f'{var.name} \ {grouping.name}', loc='left')
         table = [
             [None] + list(g_names) + ['total'],
             ['n'] + [len(g) for g in gg] + [len(var_nona)],
-            ['missing'] + list(g_missing) + [na.sum()],
+            ['missing'] + list(g_missing) + [na_loc.sum()],
             ['median'] + [np.median(g) for g in gg] +[np.median(var_nona)],
             ['mean'] + [np.mean(g) for g in gg] + [np.mean(var_nona)],
-            ['SD'] + [np.std(g) for g in gg] + [np.std(var_nona)],
+            ['SD'] + [np.std(g, ddof=1) for g in gg] + [np.std(var_nona, ddof=1)],
         ]
         style = [[None] * len(table[0])] * len(table)
-#         style = [[None] + [f'fc_C{x}' for x in range(n_groups)] + [None]]
         style[0] = [None] + [f'fc_C{x}' for x in range(n_groups)] + [None]
         style[4] = [None] + ['fc_lightgreen' if x else '' for x in possibly_normal] + [None]
-        #colWidths=[2,2,2,2]
-        table_artist = plot_table(table, style=style, loc='full', ax=ax0, )
-        table_artist.auto_set_font_size(False)
-        table_artist.set_fontsize(FONTSIZE)
+        fig, ax = _make_fig(res, table, style)
         
-        ax1 = fig.add_subplot(spec[0,1])
-        ax1.set(title=scale)
+        ax[1].set(title=scale)
         if scale == 'continuous':
-            _, loc, _ = ax1.hist(gg, rwidth=1.0)
+            _, loc, _ = ax[1].hist(gg, rwidth=1.0)
             binwidth = loc[1] - loc[0]
-            X = np.linspace(var_nona.min(), var_nona.max(), 20)
+            X = np.linspace(var_nona.min(), var_nona.max(), 100)
             for ii, g in enumerate(gg):
                 normal, lognormal = possibly_normal[ii], possibly_lognormal[ii]
                 if normal:
-                    Y = stats.norm.pdf(X, loc=g.mean(), scale=g.std()) * len(g) * binwidth
-                    ax1.plot(X, Y, color=f'C{ii}')
+                    Y = stats.norm.pdf(X, loc=g.mean(), scale=g.std(ddof=1)) * len(g) * binwidth
+                    ax[1].plot(X, Y, color=f'C{ii}')
         elif scale == 'categorical':
             counts = var_nona.groupby([var_nona,grp_nona]).count().unstack().T
-            _plot_bars(counts, ax1)
+            _plot_bars(counts, ax[1])
         else:
             raise Exception(f'unknown scale: {scale}')
         
-        ax2 = fig.add_subplot(spec[0,2])
-#         for x in range(len(g_names)):
-#             sm.qqplot(gg[x], ax=ax01, markerfacecolor='none', markeredgecolor=f'C{x}')
-        ax2.set_title('Q-Q normal~sample')
-        ax2.get_xaxis().label.set_visible(False)
-        ax2.get_yaxis().label.set_visible(False)
-        sm.qqplot(var_nona, line='s', ax=ax2, markerfacecolor='none', markeredgecolor='black')
+        for x in range(len(g_names)):
+            sm.qqplot(gg[x], ax=ax[2], markerfacecolor='none', markeredgecolor=f'C{x}', line='s')
+        ax[2].set_title('Q-Q normal~sample')
+        ax[2].get_xaxis().label.set_visible(False)
+        ax[2].get_yaxis().label.set_visible(False)
+#         sm.qqplot(var_nona, line='s', ax=ax[2], markerfacecolor='none', markeredgecolor='black')
         
-        ax3 = fig.add_subplot(spec[0,3])
-        table = plot_table(tests, style=tests_style, ax=ax3)
+        table = plot_table(tests, style=tests_style, ax=ax[3])
         table.auto_set_font_size(False)
         table.set_fontsize(FONTSIZE)
     return res
 
-def univariate_frequency_test(var, grouping, plot=True, res={}, **kwa):
-    na = var.isna()
-    var_nona = var[~ na]
-    grp_nona = grouping[~ na]
-    g_names, gg, g_missing = _split_to_groups(var_nona, na, grouping, grp_nona)
+
+
+
+
+
+
+
+
+
+
+
+
+def paired_difference_test(vars, plot=True, scale=None, parametric=None, group=None, **kwa):
+    formula = f'{vars.columns[0]} vs. {vars.columns[1]}'
+    if group is not None:
+        formula = f'{group}: ' + formula
+    res = {'formula': formula, 
+           'scale': scale}
+
+    vars_nona = vars.dropna()
+    vars_nona_list = [s for name, s in vars_nona.iteritems()]
+        
+    tests = [['test', 'p-value']]
+    tests_style = [['bold center'] * 2]
+    
+    # Shapiro-Wilk test for normal distribution
+    p_shapiro, p_logshapiro = [], []
+    for name, s in vars_nona.iteritems():
+        if len(s) < 3 or np.ptp(s) == 0:
+            p, lp = 0, 0
+        else:
+            _, p = stats.shapiro(s)
+            _, lp = stats.shapiro(np.log(s)) if s.min() > 0 else (0, 0)
+        p_shapiro.append(p)
+        p_logshapiro.append(lp)
+    possibly_normal = np.array(p_shapiro) > ALPHA
+    possibly_lognormal = np.array(p_logshapiro) > ALPHA
+    
+    if np.all(possibly_normal):
+        distribution = 'normal'
+    elif np.all(possibly_lognormal):
+        distribution = 'lognormal'
+    else:
+        distribution = None
+        
+    if distribution == 'lognormal':
+        warnings.warn(f'{list(vars.columns)}: all vars possibly lognormal. Tests not implemented, yet!')
+    
+    if vars.shape[1] == 1:
+        raise NotImplementedError('Just one measurement.')
+    elif vars.shape[1] == 2:
+        # t-test for the means of paired samples
+        s_t, p_t = stats.ttest_rel(*vars_nona_list)
+        tests.append(['paired t', p_t])
+        tests_style.append(['', 'fc_pink' if p_t < ALPHA else ''])
+        
+        # Wilcoxon rank-sum test
+        s_rs, p_rs = stats.ranksums(*vars_nona_list, alternative='two-sided')
+        tests.append(['rank-sum', p_rs])
+        tests_style.append(['', 'fc_pink' if p_rs < ALPHA else ''])
+        if parametric is None:
+            parametric = distribution == 'normal'
+        
+        if parametric:
+            res['test'] = 'paired t'
+            res['p'] = p_t
+        else:
+            res['test'] = 'rank-sum'
+            res['p'] = p_rs
+    else:
+        raise NotImplementedError('ANOVA not implemented.')
+
+    if plot:
+        table = [
+            [None] + list(vars.columns),
+            ['n'] + [len(s) for s in vars_nona_list],
+            ['missing'] + [vars.shape[0] - vars_nona.shape[0]] * len(vars_nona_list),
+            ['median'] + [np.median(s) for s in vars_nona_list],
+            ['mean'] + [np.mean(s) for s in vars_nona_list],
+            ['SD'] + [np.std(s, ddof=1) for s in vars_nona_list],
+        ]
+        style = [[None] * len(table[0])] * len(table)
+        style[0] = [None] + [f'fc_C{x}' for x in range(vars.shape[1])]
+        style[4] = [None] + ['fc_lightgreen' if x else '' for x in possibly_normal]
+        fig, ax = _make_fig(res, table, style)
+        
+        ax[1].set(title=scale)
+        if scale == 'continuous':
+            _, loc, _ = ax[1].hist(vars, rwidth=1.0)
+            binwidth = loc[1] - loc[0]
+            X = np.linspace(vars_nona.min(), vars_nona.max(), 100)
+            for ii, s in enumerate(vars_nona_list):
+                normal, lognormal = possibly_normal[ii], possibly_lognormal[ii]
+                if normal:
+                    Y = stats.norm.pdf(X, loc=s.mean(), scale=s.std(ddof=1)) * len(s) * binwidth
+                    ax[1].plot(X, Y, color=f'C{ii}')
+        elif scale == 'categorical':
+            pass
+            counts = var_nona.groupby([var_nona,grp_nona]).count().unstack().T
+            _plot_bars(counts, ax[1])
+        else:
+            raise Exception(f'unknown scale: {scale}')
+        
+        for x, s in enumerate(vars_nona_list):
+            sm.qqplot(s, ax=ax[2], markerfacecolor='none', markeredgecolor=f'C{x}', line='s')
+        ax[2].set_title('Q-Q normal~sample')
+        ax[2].get_xaxis().label.set_visible(False)
+        ax[2].get_yaxis().label.set_visible(False)
+        
+        table = plot_table(tests, style=tests_style, ax=ax[3])
+        table.auto_set_font_size(False)
+        table.set_fontsize(FONTSIZE)
+    return res
+
+
+def _make_fig(res, table, style):
+    fig = plt.figure(figsize=FIGSIZE, constrained_layout=True)
+    spec = fig.add_gridspec(1, 4, width_ratios=WIDTH_RATIOS)
+    ax = [fig.add_subplot(spec[0,col]) for col in range(4)]
+    
+    ax[0].set_title(res['formula'], loc='left')
+    table_artist = plot_table(table, style=style, loc='full', ax=ax[0])
+    table_artist.auto_set_font_size(False)
+    table_artist.set_fontsize(FONTSIZE)
+    
+    return fig, ax
+    
+
+
+
+
+
+
+
+
+def unpaired_proportion_test(var, grouping, plot=True, scale=None, **kwa):
+    res = {'formula': f'{var.name} ~ {grouping.name}', 
+           'scale': scale}
+    na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(var, grouping)
     n_groups = len(gg)
     
     tests = [['test', 'p-value']]
@@ -210,42 +332,33 @@ def univariate_frequency_test(var, grouping, plot=True, res={}, **kwa):
         tests_style.append([None, None])
     
     if plot:
-        fig = plt.figure(figsize=FIGSIZE, constrained_layout=True)
-        spec = fig.add_gridspec(1, 4, width_ratios=WIDTH_RATIOS)
-
-        ax0 = fig.add_subplot(spec[0,0])
-        ax0.set_title(f'{var.name} \ {grouping.name}', loc='left')
         tdata = [[''  ,   g_names[0], g_names[1], 'total']]
         tstyle = [[None, 'fc_C0', 'fc_C1', 'normal']]
         warn = lambda x: 'fc_pink' if x < 5 else ''
         sums = counts.sum()
         total = sums.sum()
+        # todo: add number of missing values
         perc = lambda x: f'{x} ({x / total * 100:2.0f}%)'
         for val, row in counts.iterrows():
             tdata.append([val, perc(row[0]), perc(row[1]), perc(row.sum())])
             tstyle.append(['', 'right ' + warn(row[0]), 'right ' + warn(row[1]), 'right'])
         tdata.append(['total', perc(sums[0]), perc(sums[1]), perc(total)])
         tstyle.append(['', 'right ', 'right', 'right'])
-        table = plot_table(tdata, style=tstyle, loc='full', ax=ax0, colWidths=[1,1,1,1])
-        table.auto_set_font_size(False)
-        table.set_fontsize(FONTSIZE)
+        fig, ax = _make_fig(res, tdata, tstyle)
 
-        ax1 = fig.add_subplot(spec[0,1])
-        _plot_bars(counts.T, ax1)
+        _plot_bars(counts.T, ax[1])
 
-        ax2 = fig.add_subplot(spec[:,2])
-        ax2.set_title('Observed vs Expected')
+        ax[2].set_title('Observed vs Expected')
         sums = counts.sum(axis=1)
         if sums.shape[0] > 1:
-            ax2.plot([0, sums[0]], [0, sums[1]], color='black')
+            ax[2].plot([0, sums[0]], [0, sums[1]], color='black')
             for ii, col in counts.T.iterrows():
-                ax2.plot(col[0], col[1], 'o')
-            ax2.set_aspect('equal', adjustable='box')
-            ax2.set_xlabel(sums.index[0])
-            ax2.set_ylabel(sums.index[1])
+                ax[2].plot(col[0], col[1], 'o')
+            ax[2].set_aspect('equal', adjustable='box')
+            ax[2].set_xlabel(sums.index[0])
+            ax[2].set_ylabel(sums.index[1])
 
-        ax3 = fig.add_subplot(spec[:,3])
-        table = plot_table(tests, style=tests_style, ax=ax3)
+        table = plot_table(tests, style=tests_style, ax=ax[3])
         table.auto_set_font_size(False)
         table.set_fontsize(FONTSIZE)
     return res
@@ -392,17 +505,30 @@ def fix_column_names(df):
     regex = re.compile(r'\W+')
     df.columns = [regex.sub('_', col).strip('_')  for col in df.columns]
 
-def _split_to_groups(var_nona, na, grouping, grp_nona):
+def _split_to_groups(var, grouping):
+    na_loc = var.isna()
+    var_nona = var[~ na_loc]
+    grp_nona = grouping[~ na_loc]
     if isinstance(grp_nona, pd.Series) and grp_nona.dtype.name == 'category':
         g_names = grp_nona.cat.categories
         gg = [var_nona[grp_nona == name] for name in g_names]
-        g_missing = [na[grouping == name].sum() for name in g_names]
+        g_missing = [na_loc[grouping == name].sum() for name in g_names]
     else:
         glu = np.sort(grp_nona.unique())
         g_names = [str(g) for g in glu]
         gg = [var_nona[grp_nona == g] for g in glu]
-        g_missing = [na[grouping == g].sum() for g in glu]
-    return g_names, gg, g_missing
+        g_missing = [na_loc[grouping == g].sum() for g in glu]
+    return na_loc, var_nona, grp_nona, g_names, gg, g_missing
+
+def _get_series(var, df):
+    if type(var) == pd.Series:
+        return var
+    elif df is not None and var in df.columns:
+        return df[var]
+    elif df is not None:
+        raise ValueError(f'"{var}" not found in the dataframe.')
+    else:
+        raise ValueError(f'Dataframe not passed.')
 
 def ci_mean(series, level=0.95):
     mean = series.mean()
