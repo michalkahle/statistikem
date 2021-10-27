@@ -8,8 +8,7 @@ from scipy import stats
 import warnings
 import re
 
-FIGSIZE = (10, 2)
-WIDTH_RATIOS=(4,2,2,2)
+
 FONTSIZE = 10
 ALPHA = 0.05
 
@@ -38,6 +37,7 @@ def compare_one(var, grouping=None, df=None, plot=True, scale=None, **kwa):
     if type(var) == list:
         var = df[var]
     if type(var) == pd.DataFrame:
+        # paired tests
         if not scale:
             scale = _guess_scale(var.values.flatten())
         if scale == 'binary':
@@ -47,6 +47,7 @@ def compare_one(var, grouping=None, df=None, plot=True, scale=None, **kwa):
         else:
             raise Exception(f'Unknown scale: {scale}')
     else:
+        # unpaired tests
         var = _get_series(var, df)
         grouping = _get_series(grouping, df)
         if not scale:
@@ -134,18 +135,11 @@ def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
         style = [[None] * len(table[0])] * len(table)
         style[0] = [None] + [f'fc_C{x}' for x in range(n_groups)] + [None]
         style[4] = [None] + ['fc_lightgreen' if x else '' for x in possibly_normal] + [None]
-        fig, ax = _make_fig(res, table, style)
+        hist_rows = n_groups if scale == 'continuous' else 1
+        fig, ax = _make_fig(res, table, style, rows=hist_rows)
         
-        ax[1].set(title=scale)
         if scale == 'continuous':
-            _, loc, _ = ax[1].hist(gg, rwidth=1.0)
-            binwidth = loc[1] - loc[0]
-            X = np.linspace(var_nona.min(), var_nona.max(), 100)
-            for ii, g in enumerate(gg):
-                normal, lognormal = possibly_normal[ii], possibly_lognormal[ii]
-                if normal:
-                    Y = stats.norm.pdf(X, loc=g.mean(), scale=g.std(ddof=1)) * len(g) * binwidth
-                    ax[1].plot(X, Y, color=f'C{ii}')
+            _plot_histograms(var_nona.values.flatten(), gg, possibly_normal, possibly_lognormal, ax)
         elif scale == 'categorical':
             counts = var_nona.groupby([var_nona,grp_nona]).count().unstack().T
             _plot_bars(counts, ax[1])
@@ -157,7 +151,6 @@ def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
         ax[2].set_title('Q-Q normal~sample')
         ax[2].get_xaxis().label.set_visible(False)
         ax[2].get_yaxis().label.set_visible(False)
-#         sm.qqplot(var_nona, line='s', ax=ax[2], markerfacecolor='none', markeredgecolor='black')
         
         table = plot_table(tests, style=tests_style, ax=ax[3])
         table.auto_set_font_size(False)
@@ -176,22 +169,20 @@ def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
 
 
 
-def paired_difference_test(vars, plot=True, scale=None, parametric=None, group=None, **kwa):
-    formula = f'{vars.columns[0]} vs. {vars.columns[1]}'
-    if group is not None:
-        formula = f'{group}: ' + formula
-    res = {'formula': formula, 
-           'scale': scale}
+def paired_difference_test(measurements, plot=True, scale=None, parametric=None, **kwa):
+    formula = f'{measurements.columns[0]} vs. {measurements.columns[1]}'
+    res = {'formula': formula, 'scale': scale}
 
-    vars_nona = vars.dropna()
-    vars_nona_list = [s for name, s in vars_nona.iteritems()]
+    mm_nona = measurements.dropna()
+    mm_nona_list = [s for name, s in mm_nona.iteritems()]
+    n_mm = len(mm_nona_list)
         
     tests = [['test', 'p-value']]
     tests_style = [['bold center'] * 2]
     
     # Shapiro-Wilk test for normal distribution
     p_shapiro, p_logshapiro = [], []
-    for name, s in vars_nona.iteritems():
+    for name, s in mm_nona.iteritems():
         if len(s) < 3 or np.ptp(s) == 0:
             p, lp = 0, 0
         else:
@@ -210,18 +201,18 @@ def paired_difference_test(vars, plot=True, scale=None, parametric=None, group=N
         distribution = None
         
     if distribution == 'lognormal':
-        warnings.warn(f'{list(vars.columns)}: all vars possibly lognormal. Tests not implemented, yet!')
+        warnings.warn(f'{list(measurements.columns)}: all measurements possibly lognormal. Tests not implemented, yet!')
     
-    if vars.shape[1] == 1:
+    if measurements.shape[1] == 1:
         raise NotImplementedError('Just one measurement.')
-    elif vars.shape[1] == 2:
+    elif measurements.shape[1] == 2:
         # t-test for the means of paired samples
-        s_t, p_t = stats.ttest_rel(*vars_nona_list)
+        s_t, p_t = stats.ttest_rel(*mm_nona_list)
         tests.append(['paired t', p_t])
         tests_style.append(['', 'fc_pink' if p_t < ALPHA else ''])
         
         # Wilcoxon rank-sum test
-        s_rs, p_rs = stats.ranksums(*vars_nona_list, alternative='two-sided')
+        s_rs, p_rs = stats.ranksums(*mm_nona_list, alternative='two-sided')
         tests.append(['rank-sum', p_rs])
         tests_style.append(['', 'fc_pink' if p_rs < ALPHA else ''])
         if parametric is None:
@@ -238,28 +229,21 @@ def paired_difference_test(vars, plot=True, scale=None, parametric=None, group=N
 
     if plot:
         table = [
-            [None] + list(vars.columns),
-            ['n'] + [len(s) for s in vars_nona_list],
-            ['missing'] + [vars.shape[0] - vars_nona.shape[0]] * len(vars_nona_list),
-            ['median'] + [np.median(s) for s in vars_nona_list],
-            ['mean'] + [np.mean(s) for s in vars_nona_list],
-            ['SD'] + [np.std(s, ddof=1) for s in vars_nona_list],
+            [None] + list(measurements.columns),
+            ['n'] + [len(s) for s in mm_nona_list],
+            ['missing'] + [measurements.shape[0] - mm_nona.shape[0]] * n_mm,
+            ['median'] + [np.median(s) for s in mm_nona_list],
+            ['mean'] + [np.mean(s) for s in mm_nona_list],
+            ['SD'] + [np.std(s, ddof=1) for s in mm_nona_list],
         ]
         style = [[None] * len(table[0])] * len(table)
-        style[0] = [None] + [f'fc_C{x}' for x in range(vars.shape[1])]
+        style[0] = [None] + [f'fc_C{x}' for x in range(measurements.shape[1])]
         style[4] = [None] + ['fc_lightgreen' if x else '' for x in possibly_normal]
-        fig, ax = _make_fig(res, table, style)
         
-        ax[1].set(title=scale)
+        fig, ax = _make_fig(res, table, style, rows=measurements.shape[1])
+        
         if scale == 'continuous':
-            _, loc, _ = ax[1].hist(vars, rwidth=1.0)
-            binwidth = loc[1] - loc[0]
-            X = np.linspace(vars_nona.min(), vars_nona.max(), 100)
-            for ii, s in enumerate(vars_nona_list):
-                normal, lognormal = possibly_normal[ii], possibly_lognormal[ii]
-                if normal:
-                    Y = stats.norm.pdf(X, loc=s.mean(), scale=s.std(ddof=1)) * len(s) * binwidth
-                    ax[1].plot(X, Y, color=f'C{ii}')
+            _plot_histograms(mm_nona.values.flatten(), mm_nona_list, possibly_normal, possibly_lognormal, ax)
         elif scale == 'categorical':
             pass
             counts = var_nona.groupby([var_nona,grp_nona]).count().unstack().T
@@ -267,7 +251,7 @@ def paired_difference_test(vars, plot=True, scale=None, parametric=None, group=N
         else:
             raise Exception(f'unknown scale: {scale}')
         
-        for x, s in enumerate(vars_nona_list):
+        for x, s in enumerate(mm_nona_list):
             sm.qqplot(s, ax=ax[2], markerfacecolor='none', markeredgecolor=f'C{x}', line='s')
         ax[2].set_title('Q-Q normal~sample')
         ax[2].get_xaxis().label.set_visible(False)
@@ -276,26 +260,10 @@ def paired_difference_test(vars, plot=True, scale=None, parametric=None, group=N
         table = plot_table(tests, style=tests_style, ax=ax[3])
         table.auto_set_font_size(False)
         table.set_fontsize(FONTSIZE)
+        
+#         plt.subplots_adjust(hspace=0.05, wspace=0.05)
+#         fig.tight_layout()
     return res
-
-
-def _make_fig(res, table, style):
-    fig = plt.figure(figsize=FIGSIZE, constrained_layout=True)
-    spec = fig.add_gridspec(1, 4, width_ratios=WIDTH_RATIOS)
-    ax = [fig.add_subplot(spec[0,col]) for col in range(4)]
-    
-    ax[0].set_title(res['formula'], loc='left')
-    table_artist = plot_table(table, style=style, loc='full', ax=ax[0])
-    table_artist.auto_set_font_size(False)
-    table_artist.set_fontsize(FONTSIZE)
-    
-    return fig, ax
-    
-
-
-
-
-
 
 
 
@@ -476,7 +444,49 @@ def plot_table(cells, style=None, global_style=None,
     ax.axis('off')
     return table
 
+
+
+
+
+def _make_fig(res, table, style, rows=1):
+    fig = plt.figure(figsize=(12, 2), constrained_layout=False)
+    spec = fig.add_gridspec(rows, 4, width_ratios=(4,2,2,2), hspace=.2)
+    ax = 4 * [None]
+    ax[0] = fig.add_subplot(spec[:,0])
+    ax[1] = [fig.add_subplot(spec[0,1])]
+    ax[1] += [fig.add_subplot(spec[row,1], sharex=ax[1][0], sharey=ax[1][0]) for row in range(1, rows)]
+    ax[2] = fig.add_subplot(spec[:,2])
+    ax[3] = fig.add_subplot(spec[:,3])
+    
+    ax[0].set_title(res['formula'], loc='left')
+    ax[1][0].set(title=res['scale'])
+    table_artist = plot_table(table, style=style, loc='full', ax=ax[0])
+    table_artist.auto_set_font_size(False)
+    table_artist.set_fontsize(FONTSIZE)
+    
+    return fig, ax
+    
+def _plot_histograms(all_values, groups_list, possibly_normal, possibly_lognormal, ax):
+    n_mm = len(groups_list)
+    nbins = max([10] + [len(g) // 10 for g in groups_list])
+    X = np.linspace(all_values.min(), all_values.max(), 100)
+    _, bins = np.histogram(all_values, nbins)
+    for ii, s in enumerate(groups_list):
+        ax[1][ii].hist(groups_list[ii], bins=bins, color=f'C{ii}')
+        if ii < (n_mm - 1):
+#                     ax[1][ii].tick_params(bottom=False, labelbottom=False)
+            ax[1][ii].get_xaxis().set_visible(False)
+#                     ax[1][ii].set_xticks([])
+        binwidth = bins[1] - bins[0]
+        normal, lognormal = possibly_normal[ii], possibly_lognormal[ii]
+        if normal:
+            Y = stats.norm.pdf(X, loc=s.mean(), scale=s.std(ddof=1)) * len(s) * binwidth
+            ax[1][ii].plot(X, Y, color='k')#f'C{ii}'
+
+
 def _plot_bars(counts, ax):
+    
+    ax = ax[0]
     n_groups = counts.shape[0]
     w_total = 0.8
     w_single = w_total / n_groups
