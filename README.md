@@ -1,4 +1,5 @@
-# statistikem
+# statistimp
+An imp statistician at your service.
 
 A simple Python library for quick assesment of variables in small datasets. 
 Descriptive statistics, distribution, tests for difference in distribution of groups.
