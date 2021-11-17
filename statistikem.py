@@ -93,9 +93,7 @@ def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
     if distribution == 'lognormal':
         warnings.warn(f'{var.name}: all groups possibly lognormal. Tests not implemented, yet!')
     
-    if n_groups == 1:
-        raise NotImplementedError('Just one group.')
-    elif n_groups == 2:
+    if n_groups > 1:
         # Levene test for equal variances
         center = 'mean' if distribution == 'normal' else 'median'
         s_levene, p_levene = stats.levene(*gg, center=center)
@@ -103,6 +101,14 @@ def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
         tests.append(['Levene', p_levene])
         tests_style.append(['', '' if equal_var else 'fc_pink'])
         
+    
+    if n_groups == 1:
+        # t-test for the mean of one group
+        s_t, p_t = stats.ttest_1samp(*gg, popmean=0)
+        tests.append(['one sample t', p_t])
+        tests_style.append(['', 'fc_pink' if p_t < ALPHA else ''])
+        res['test'], res['p'] = 't', p_t
+    elif n_groups == 2:
         # t-test for the means of two independent samples
         s_t, p_t = stats.ttest_ind(*gg, equal_var=equal_var)
         tests.append(['Student\'s t' if equal_var else 'Welch\'s t', p_t])
@@ -114,14 +120,15 @@ def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
         tests_style.append(['', 'fc_pink' if p_mw < ALPHA else ''])
         
         if distribution == 'normal':
-            res['test'] = 't'
-            res['p'] = p_t
+            res['test'], res['p'] = 't', p_t
         else:
-            res['test'] = 'Mann-Whitney'
-            res['p'] = p_mw
+            res['test'], res['p'] = 'Mann-Whitney', p_mw
     else:
         # ANOVA
-        pass
+        s_a, p_a = stats.f_oneway(*gg)
+        tests.append(['ANOVA', p_a])
+        tests_style.append(['', 'fc_pink' if p_a < ALPHA else ''])
+        res['test'], res['p'] = 'ANOVA', p_a
     
     if plot:
         table = [
