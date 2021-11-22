@@ -47,23 +47,22 @@ def compare_one(var, grouping=None, df=None, plot=True, scale=None, **kwa):
         else:
             raise Exception(f'Unknown scale: {scale}')
     else:
-        # unpaired tests
+        # independent tests
         var = _get_series(var, df)
         grouping = _get_series(grouping, df)
         if not scale:
             scale = _guess_scale(var)
 
         if scale == 'binary':
-            res = unpaired_proportion_test(var, grouping, plot=plot, scale=scale, **kwa)
+            res = independent_proportion_test(var, grouping, plot=plot, scale=scale, **kwa)
         elif scale == 'categorical' or scale == 'continuous':
-            res = unpaired_difference_test(var, grouping, plot=plot, scale=scale, **kwa)
+            res = independent_difference_test(var, grouping, plot=plot, scale=scale, **kwa)
         else:
             raise Exception(f'Unknown scale: {scale}')
     return res
 
-def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
-    res = {'formula': f'{var.name} ~ {grouping.name}', 
-           'scale': scale}
+def independent_difference_test(var, grouping, plot=True, scale=None, parametric=None, **kwa):
+    res = {'formula': f'{var.name} ~ {grouping.name}', 'scale': scale}
     na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(var, grouping)
     n_groups = len(gg)
         
@@ -80,22 +79,24 @@ def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
             _, lp = stats.shapiro(np.log(group)) if group.min() > 0 else (0, 0)
         p_shapiro.append(p)
         p_logshapiro.append(lp)
-    possibly_normal = np.array(p_shapiro) > ALPHA
-    possibly_lognormal = np.array(p_logshapiro) > ALPHA
+    possibly_normal = np.array(p_shapiro) > ALPHA / n_groups # Bonferroni correction
+    possibly_lognormal = np.array(p_logshapiro) > ALPHA / n_groups # Bonferroni correction
     
     if np.all(possibly_normal):
         distribution = 'normal'
     elif np.all(possibly_lognormal):
         distribution = 'lognormal'
+        warnings.warn(f'{var.name}: all groups possibly lognormal. Tests not implemented, yet!')
     else:
         distribution = None
+    if parametric is None:
+        parametric = True if distribution == 'normal' else False
         
-    if distribution == 'lognormal':
-        warnings.warn(f'{var.name}: all groups possibly lognormal. Tests not implemented, yet!')
+        
     
     if n_groups > 1:
         # Levene test for equal variances
-        center = 'mean' if distribution == 'normal' else 'median'
+        center = 'mean' if parametric else 'median'
         s_levene, p_levene = stats.levene(*gg, center=center)
         equal_var = p_levene > ALPHA
         tests.append(['Levene', p_levene])
@@ -119,7 +120,7 @@ def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
         tests.append(['Mann-Whitney', p_mw])
         tests_style.append(['', 'fc_pink' if p_mw < ALPHA else ''])
         
-        if distribution == 'normal':
+        if parametric:
             res['test'], res['p'] = 't', p_t
         else:
             res['test'], res['p'] = 'Mann-Whitney', p_mw
@@ -128,10 +129,19 @@ def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
         s_a, p_a = stats.f_oneway(*gg)
         tests.append(['ANOVA', p_a])
         tests_style.append(['', 'fc_pink' if p_a < ALPHA else ''])
-        res['test'], res['p'] = 'ANOVA', p_a
+    
+        # Kruskal-Wallis H-test for independent samples
+        s_kw, p_kw = stats.kruskal(*gg)
+        tests.append(['Kruskal-Wallis', p_kw])
+        tests_style.append(['', 'fc_pink' if p_kw < ALPHA else ''])
+
+        if parametric:
+            res['test'], res['p'] = 'ANOVA', p_a
+        else:
+            res['test'], res['p'] = 'Kruskal-Wallis', p_kw
     
     if plot:
-        table = [
+        table_0 = [
             [None] + list(g_names) + ['total'],
             ['n'] + [len(g) for g in gg] + [len(var_nona)],
             ['missing'] + list(g_missing) + [na_loc.sum()],
@@ -139,11 +149,11 @@ def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
             ['mean'] + [np.mean(g) for g in gg] + [np.mean(var_nona)],
             ['SD'] + [np.std(g, ddof=1) for g in gg] + [np.std(var_nona, ddof=1)],
         ]
-        style = [[None] * len(table[0])] * len(table)
-        style[0] = [None] + [f'fc_C{x}' for x in range(n_groups)] + [None]
-        style[4] = [None] + ['fc_lightgreen' if x else '' for x in possibly_normal] + [None]
+        style_0 = [[None] * len(table_0[0])] * len(table_0)
+        style_0[0] = [None] + [f'fc_C{x}' for x in range(n_groups)] + [None]
+        style_0[4] = [None] + ['fc_lightgreen' if x else '' for x in possibly_normal] + [None]
         hist_rows = n_groups if scale == 'continuous' else 1
-        fig, ax = _make_fig(res, table, style, rows=hist_rows)
+        fig, ax = _make_fig(res, table_0, style_0, rows=hist_rows)
         
         if scale == 'continuous':
             _plot_histograms(var_nona.values.flatten(), gg, possibly_normal, possibly_lognormal, ax)
@@ -162,6 +172,7 @@ def unpaired_difference_test(var, grouping, plot=True, scale=None, **kwa):
         table = plot_table(tests, style=tests_style, ax=ax[3])
         table.auto_set_font_size(False)
         table.set_fontsize(FONTSIZE)
+        plt.show()
     return res
 
 
@@ -211,7 +222,7 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
         warnings.warn(f'{list(measurements.columns)}: all measurements possibly lognormal. Tests not implemented, yet!')
     
     if measurements.shape[1] == 1:
-        raise NotImplementedError('Just one measurement.')
+        raise NotImplementedError('Just one measurement.') # this should never happen
     elif measurements.shape[1] == 2:
         # t-test for the means of paired samples
         s_t, p_t = stats.ttest_rel(*mm_nona_list)
@@ -226,11 +237,9 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
             parametric = distribution == 'normal'
         
         if parametric:
-            res['test'] = 'paired t'
-            res['p'] = p_t
+            res['test'], res['p'] = 'paired t', p_t
         else:
-            res['test'] = 'rank-sum'
-            res['p'] = p_rs
+            res['test'], res['p'] = 'rank-sum', p_rs
     else:
         raise NotImplementedError('ANOVA not implemented.')
 
@@ -247,14 +256,16 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
         style[0] = [None] + [f'fc_C{x}' for x in range(measurements.shape[1])]
         style[4] = [None] + ['fc_lightgreen' if x else '' for x in possibly_normal]
         
-        fig, ax = _make_fig(res, table, style, rows=measurements.shape[1])
+        hist_rows = measurements.shape[1] if scale == 'continuous' else 1
+        fig, ax = _make_fig(res, table, style, rows=hist_rows)
         
         if scale == 'continuous':
             _plot_histograms(mm_nona.values.flatten(), mm_nona_list, possibly_normal, possibly_lognormal, ax)
         elif scale == 'categorical':
+            print(mm_nona.shape)
+            counts = mm_nona.melt().assign(count=1).groupby(['variable', 'value']).count().unstack('variable').fillna(0)
+            _plot_bars(counts.T, ax[1])
             pass
-            counts = var_nona.groupby([var_nona,grp_nona]).count().unstack().T
-            _plot_bars(counts, ax[1])
         else:
             raise Exception(f'unknown scale: {scale}')
         
@@ -267,6 +278,7 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
         table = plot_table(tests, style=tests_style, ax=ax[3])
         table.auto_set_font_size(False)
         table.set_fontsize(FONTSIZE)
+        plt.show()
         
 #         plt.subplots_adjust(hspace=0.05, wspace=0.05)
 #         fig.tight_layout()
@@ -274,9 +286,8 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
 
 
 
-def unpaired_proportion_test(var, grouping, plot=True, scale=None, **kwa):
-    res = {'formula': f'{var.name} ~ {grouping.name}', 
-           'scale': scale}
+def independent_proportion_test(var, grouping, plot=True, scale=None, **kwa):
+    res = {'formula': f'{var.name} ~ {grouping.name}', 'scale': scale}
     na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(var, grouping)
     n_groups = len(gg)
     
@@ -285,10 +296,10 @@ def unpaired_proportion_test(var, grouping, plot=True, scale=None, **kwa):
     counts = pd.crosstab(var_nona, grp_nona)
     chi2_valid = '' if counts.values.min() >= 5 else 'fc_pink'
 
-    if var_nona.unique().shape[0] > 1:
+    if counts.shape[0] > 1:
         test = 'Pearson chi^2'
         chi2, p, dof, exp = stats.chi2_contingency(counts, correction=False)
-        res['test'], res['p'] = test, p
+#         res['test'], res['p'] = test, p
         tests.append([r'$\chi^2$ Pearson', p])
         tests_style.append([chi2_valid, 'fc_pink' if p < ALPHA else ''])
 
@@ -298,28 +309,35 @@ def unpaired_proportion_test(var, grouping, plot=True, scale=None, **kwa):
         tests.append([r'$\chi^2$ Yates', p])
         tests_style.append([chi2_valid, 'fc_pink' if p < ALPHA else ''])
 
-        test = 'Fisher exact'
-        oddsratio, p = stats.fisher_exact(counts, alternative='two-sided')
-        res['test'], res['p'] = test, p
-        tests.append([test, p])
-        tests_style.append(['', 'fc_pink' if p < ALPHA else ''])
-        tests.append(['odds ratio', oddsratio])
-        tests_style.append([None, None])
-    
+        if counts.shape == (2, 2): 
+            test = 'Fisher exact'
+            oddsratio, p = stats.fisher_exact(counts, alternative='two-sided')
+            res['test'], res['p'] = test, p
+            tests.append([test, p])
+            tests_style.append(['', 'fc_pink' if p < ALPHA else ''])
+            tests.append(['odds ratio', oddsratio])
+            tests_style.append([None, None])
+        elif startr():
+            test = 'Fisher exact'
+            p = r_stats.fisher_test(counts.values)[0][0]
+            res['test'], res['p'] = test, p
+            tests.append([test, p])
+            tests_style.append(['', 'fc_pink' if p < ALPHA else ''])
     if plot:
-        tdata = [[''  ,   g_names[0], g_names[1], 'total']]
-        tstyle = [[None, 'fc_C0', 'fc_C1', 'normal']]
-        warn = lambda x: 'fc_pink' if x < 5 else ''
+        table_0 = [[''] + list(g_names) + ['total']]
+        style_0 = [[None] + [f'fc_C{x}' for x in range(counts.shape[1])] + ['normal']]
         sums = counts.sum()
         total = sums.sum()
-        # todo: add number of missing values
+        warn = lambda x: 'fc_pink' if x < 5 else ''
         perc = lambda x: f'{x} ({x / total * 100:2.0f}%)'
         for val, row in counts.iterrows():
-            tdata.append([val, perc(row[0]), perc(row[1]), perc(row.sum())])
-            tstyle.append(['', 'right ' + warn(row[0]), 'right ' + warn(row[1]), 'right'])
-        tdata.append(['total', perc(sums[0]), perc(sums[1]), perc(total)])
-        tstyle.append(['', 'right ', 'right', 'right'])
-        fig, ax = _make_fig(res, tdata, tstyle)
+            table_0.append([val] + [perc(x) for x in row] + [perc(row.sum())])
+            style_0.append([''] + ['right ' + warn(x) for x in row] + ['right'])
+        table_0.append(['total'] + [perc(x) for x in sums] + [perc(total)])
+        style_0.append([''] + ['right' for x in sums] + ['right'])
+        table_0.append(['missing'] + [x for x in g_missing] + [sum(g_missing)])
+        style_0.append([''] + ['right' for x in g_missing] + ['right'])
+        fig, ax = _make_fig(res, table_0, style_0)
 
         _plot_bars(counts.T, ax[1])
 
@@ -336,13 +354,27 @@ def unpaired_proportion_test(var, grouping, plot=True, scale=None, **kwa):
         table = plot_table(tests, style=tests_style, ax=ax[3])
         table.auto_set_font_size(False)
         table.set_fontsize(FONTSIZE)
+        plt.show()
     return res
 
+# def _perc(x, arr):
+#     return f'{x} ({x / total * 100:2.0f}%)'
+    
 
+r_stats = None
 
-
-
-
+def startr():
+    global r_stats
+    if r_stats is None:
+        try:
+            import rpy2
+            from rpy2.robjects import numpy2ri
+            numpy2ri.activate()
+            from rpy2.robjects.packages import importr
+            r_stats = importr('stats')
+        except ModuleNotFoundError:
+            warnings.warn(f'Fisher test of table larger than 2x2 requires R and rpy2 installed.')
+    return r_stats
 
 def plot_table(cells, style=None, global_style=None, 
                colWidths=None, rowHeights=None,
@@ -456,7 +488,7 @@ def plot_table(cells, style=None, global_style=None,
 
 
 def _make_fig(res, table, style, rows=1):
-    fig = plt.figure(figsize=(12, 2), constrained_layout=False)
+    fig = plt.figure(figsize=(14, 2), constrained_layout=False)
     spec = fig.add_gridspec(rows, 4, width_ratios=(4,2,2,2), hspace=.2)
     ax = 4 * [None]
     ax[0] = fig.add_subplot(spec[:,0])
@@ -538,7 +570,9 @@ def _split_to_groups(var, grouping):
     return na_loc, var_nona, grp_nona, g_names, gg, g_missing
 
 def _get_series(var, df):
-    if type(var) == pd.Series:
+    if var is None:
+        return None
+    elif type(var) == pd.Series:
         return var
     elif df is not None and var in df.columns:
         return df[var]
@@ -565,3 +599,13 @@ def ci_mean_lognormal(x, level=0.95):
     return {'mean' : np.exp(ln_mean), 
             'min'  : np.exp(ln_mean - hci), 
             'max'  : np.exp(ln_mean + hci)}
+
+def format_p(p):
+    if p is None:
+        return ''
+    elif p == 1.0:
+        return '1.0'
+    elif p < 0.001:
+        return '<0.001'
+    else:
+        return f'{p:.{2 if p > 0.2 else 3}f}'#.lstrip('0')
