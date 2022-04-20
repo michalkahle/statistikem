@@ -104,6 +104,11 @@ def independent_difference_test(var, grouping, plot=True, scale=None, parametric
         
     
     if n_groups == 1:
+        # Shapiro-Wilk test of normality
+        s_sw, p_sw = stats.shapiro(*gg)
+        tests.append(['Shapiro-Wilk', p_sw])
+        tests_style.append(['', 'fc_pink' if p_sw < ALPHA else ''])
+        #res['test'], res['p'] = 'Shapiro-Wilk', p_sw
         # t-test for the mean of one group
         s_t, p_t = stats.ttest_1samp(*gg, popmean=0)
         tests.append(['one sample t', p_t])
@@ -344,9 +349,9 @@ def independent_proportion_test(var, grouping, plot=True, scale=None, **kwa):
         ax[2].set_title('Observed vs Expected')
         sums = counts.sum(axis=1)
         if sums.shape[0] > 1:
-            ax[2].plot([0, sums[0]], [0, sums[1]], color='black')
+            ax[2].plot([0, sums.iloc[0]], [0, sums.iloc[1]], color='black')
             for ii, col in counts.T.iterrows():
-                ax[2].plot(col[0], col[1], 'o')
+                ax[2].plot(col.iloc[0], col.iloc[1], 'o')
             ax[2].set_aspect('equal', adjustable='box')
             ax[2].set_xlabel(sums.index[0])
             ax[2].set_ylabel(sums.index[1])
