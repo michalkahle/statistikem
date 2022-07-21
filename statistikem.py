@@ -33,7 +33,39 @@ def compare(var_list, grouping=None, df=None, plot=True, scales=None, sort=None,
         res_df = res_df.sort_values(sort)
     return res_df
 
-def compare_one(var, grouping=None, df=None, plot=True, scale=None, **kwa):
+def compare_one(var, grouping=None, df=None, plot=True, scale=None, parametric=None, **kwa):
+    """Describe and compare one grouped variable
+    
+    Parameters
+    ----------
+    var : str, list of str, Series or DataFrame
+        Name or list of names of DataFrame columns, Series or DataFrame with
+        data. In case of single column or Series the observations are assumed
+        to be independent. In case of multiple columns repeated or related
+        observations are assumed.
+    grouping : str or Series
+        Name of column or a Series that will be used for grouping independent
+        observations.
+    df : DataFrame, optional
+        If names of columns are given for `var` and `grouping` then DataFrame
+        containing these columns must be given.
+    plot : bool, default=True
+        Plot graphical summary.
+    scale : {'binary', 'categorical', 'continuous'}, optional
+        Scale of the variable (for plots). If not given it is guessed from data.
+    parametric : bool, optional
+        Force parametric or non-parametric tests. By default it is decided
+        by the Shapiro-Wilk test of normality.
+    
+    Returns
+    -------
+    dict
+        result of comparison:
+        formula : R-style description of the model
+        scale : scale of the variable
+        test : the statistical test used
+        p : the p-value
+"""
     if type(var) == list:
         var = df[var]
     if type(var) == pd.DataFrame:
@@ -56,13 +88,13 @@ def compare_one(var, grouping=None, df=None, plot=True, scale=None, **kwa):
         if scale == 'binary':
             res = independent_proportion_test(var, grouping, plot=plot, scale=scale, **kwa)
         elif scale == 'categorical' or scale == 'continuous':
-            res = independent_difference_test(var, grouping, plot=plot, scale=scale, **kwa)
+            res = independent_difference_test(var, grouping, plot=plot, scale=scale, parametric=parametric, **kwa)
         else:
             raise Exception(f'Unknown scale: {scale}')
     return res
 
 def independent_difference_test(var, grouping, plot=True, scale=None, parametric=None, **kwa):
-    res = {'formula': f'{var.name} ~ {grouping.name}', 'scale': scale}
+    res = {'formula': f'{var.name} ~ {grouping.name}', 'scale': scale, 'test': None, 'p': np.nan}
     na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(var, grouping)
     n_groups = len(gg)
         
@@ -194,7 +226,7 @@ def independent_difference_test(var, grouping, plot=True, scale=None, parametric
 
 def paired_difference_test(measurements, plot=True, scale=None, parametric=None, **kwa):
     formula = f'{measurements.columns[0]} vs. {measurements.columns[1]}'
-    res = {'formula': formula, 'scale': scale}
+    res = {'formula': formula, 'scale': scale, 'test': None, 'p': np.nan}
 
     mm_nona = measurements.dropna()
     mm_nona_list = [s for name, s in mm_nona.iteritems()]
@@ -224,7 +256,8 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
         distribution = None
         
     if distribution == 'lognormal':
-        warnings.warn(f'{list(measurements.columns)}: all measurements possibly lognormal. Tests not implemented, yet!')
+        warnings.warn(f'{list(measurements.columns)}: all measurements possibly'
+                      'lognormal. Tests not implemented, yet!')
     
     if measurements.shape[1] == 1:
         raise NotImplementedError('Just one measurement.') # this should never happen
@@ -246,7 +279,9 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
         else:
             res['test'], res['p'] = 'rank-sum', p_rs
     else:
-        raise NotImplementedError('ANOVA not implemented.')
+        res['test'], res['p'] = 'ANOVA', None
+        warnings.warn(f'ANOVA not implemented, yet!')
+        
 
     if plot:
         table = [
@@ -265,12 +300,13 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
         fig, ax = _make_fig(res, table, style, rows=hist_rows)
         
         if scale == 'continuous':
-            _plot_histograms(mm_nona.values.flatten(), mm_nona_list, possibly_normal, possibly_lognormal, ax)
+            _plot_histograms(mm_nona.values.flatten(), mm_nona_list,
+                             possibly_normal, possibly_lognormal, ax)
         elif scale == 'categorical':
             print(mm_nona.shape)
-            counts = mm_nona.melt().assign(count=1).groupby(['variable', 'value']).count().unstack('variable').fillna(0)
+            counts = (mm_nona.melt().assign(count=1).groupby(['variable', 'value'])
+                      .count().unstack('variable').fillna(0))
             _plot_bars(counts.T, ax[1])
-            pass
         else:
             raise Exception(f'unknown scale: {scale}')
         
@@ -292,7 +328,7 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
 
 
 def independent_proportion_test(var, grouping, plot=True, scale=None, **kwa):
-    res = {'formula': f'{var.name} ~ {grouping.name}', 'scale': scale}
+    res = {'formula': f'{var.name} ~ {grouping.name}', 'scale': scale, 'test': None, 'p': np.nan}
     na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(var, grouping)
     n_groups = len(gg)
     
@@ -498,7 +534,8 @@ def _make_fig(res, table, style, rows=1):
     ax = 4 * [None]
     ax[0] = fig.add_subplot(spec[:,0])
     ax[1] = [fig.add_subplot(spec[0,1])]
-    ax[1] += [fig.add_subplot(spec[row,1], sharex=ax[1][0], sharey=ax[1][0]) for row in range(1, rows)]
+    ax[1] += [fig.add_subplot(spec[row,1], sharex=ax[1][0], sharey=ax[1][0]) 
+              for row in range(1, rows)]
     ax[2] = fig.add_subplot(spec[:,2])
     ax[3] = fig.add_subplot(spec[:,3])
     
@@ -592,7 +629,8 @@ def ci_mean(series, level=0.95):
     hci = series.sem() * stats.t.ppf(q, len(series))
     return {'mean' : mean, 'min' : mean - hci, 'max' : mean + hci}
 
-# Ulf Olsson (2005) Confidence Intervals for the Mean of a Log-Normal Distribution, Journal of Statistics Education, 13:1
+# Ulf Olsson (2005) Confidence Intervals for the Mean of a Log-Normal Distribution, 
+# Journal of Statistics Education, 13:1
 def ci_mean_lognormal(x, level=0.95):
     n = len(x)
     y = np.log(x)
