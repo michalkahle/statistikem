@@ -12,7 +12,7 @@ import re
 FONTSIZE = 10
 ALPHA = 0.05
 
-def compare(var_list, grouping=None, df=None, plot=True, scales=None, sort=None, **kwa):
+def compare(var_list, grouping=None, data=None, plot=True, scales=None, sort=None, **kwa):
     if type(var_list) == str:
         var_list = [var_list]
     if type(scales) == str:
@@ -25,7 +25,7 @@ def compare(var_list, grouping=None, df=None, plot=True, scales=None, sort=None,
     orig_mow = plt.rcParams['figure.max_open_warning'] = 0
     for var, scale in zip(var_list, scales):
         if var != grouping:
-            res = compare_one(var, grouping, df=df, plot=plot, scale=scale, **kwa)
+            res = compare_one(var, grouping, data=data, plot=plot, scale=scale, **kwa)
             ll.append(res)
     plt.rcParams['figure.max_open_warning'] = orig_mow
     res_df = pd.DataFrame(ll)
@@ -33,7 +33,7 @@ def compare(var_list, grouping=None, df=None, plot=True, scales=None, sort=None,
         res_df = res_df.sort_values(sort)
     return res_df
 
-def compare_one(var, grouping=None, df=None, plot=True, scale=None, parametric=None, **kwa):
+def compare_one(var, grouping=None, data=None, plot=True, scale=None, parametric=None, **kwa):
     """Describe and compare one grouped variable
     
     Parameters
@@ -46,7 +46,7 @@ def compare_one(var, grouping=None, df=None, plot=True, scale=None, parametric=N
     grouping : str or Series
         Name of column or a Series that will be used for grouping independent
         observations.
-    df : DataFrame, optional
+    data : DataFrame, optional
         If names of columns are given for `var` and `grouping` then DataFrame
         containing these columns must be given.
     plot : bool, default=True
@@ -67,7 +67,7 @@ def compare_one(var, grouping=None, df=None, plot=True, scale=None, parametric=N
         p : the p-value
 """
     if type(var) == list:
-        var = df[var]
+        var = data[var]
     if type(var) == pd.DataFrame:
         # paired tests
         if not scale:
@@ -80,8 +80,8 @@ def compare_one(var, grouping=None, df=None, plot=True, scale=None, parametric=N
             raise Exception(f'Unknown scale: {scale}')
     else:
         # independent tests
-        var = _get_series(var, df)
-        grouping = _get_series(grouping, df)
+        var = _get_series(var, data)
+        grouping = _get_series(grouping, data)
         if not scale:
             scale = _guess_scale(var)
 
@@ -417,9 +417,8 @@ def startr():
             warnings.warn(f'Fisher test of table larger than 2x2 requires R and rpy2 installed.')
     return r_stats
 
-def plot_table(cells, style=None, global_style=None, 
-               colWidths=None, rowHeights=None,
-               loc=None, bbox=None, ax=None, **kwargs):
+def plot_table(cells, style=None, global_style=None, colWidths=None,
+               rowHeights=None, loc=None, bbox=None, ax=None, **kwa):
     if not ax:
         fig, ax = plt.subplots()
     if global_style is None:
@@ -431,7 +430,7 @@ def plot_table(cells, style=None, global_style=None,
         loc, bbox = None, [0, 0, 1, 1]
         
     # Now create the table
-    table = mpl.table.Table(ax, loc, bbox, **kwargs)
+    table = mpl.table.Table(ax, loc, bbox, **kwa)
     height = table._approx_text_height() * 1.2
 
     cells = np.array(cells, dtype=object)
