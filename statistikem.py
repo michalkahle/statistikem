@@ -118,7 +118,8 @@ def compare_one(var, grouping=None, data=None, plot=True, summary=False,
         if not scale:
             scale = _guess_scale(var.values.flatten())
         if scale == 'binary':
-            res = paired_proportion_test(var, plot=plot, scale=scale, **kwa)
+            warnings.warn('paired_proportion_test not implemented.')
+            # res = paired_proportion_test(var, plot=plot, scale=scale, **kwa)
         elif scale == 'categorical' or scale == 'continuous':
             res = paired_difference_test(var, plot=plot, scale=scale, **kwa)
         else:
@@ -662,6 +663,12 @@ def fix_column_names(df):
     df.columns = [regex.sub('_', col).strip('_')  for col in df.columns]
 
 def _split_to_groups(var, grouping):
+    grouping_na = grouping.isna()
+    grouping_na_sum = grouping_na.sum()
+    if grouping_na_sum > 0:
+        var = var[~ grouping_na]
+        grouping = grouping[~ grouping_na]
+        warnings.warn(f'{grouping_na_sum} rows removed because of missing values in grouping variable.')
     na_loc = var.isna()
     var_nona = var[~ na_loc]
     grp_nona = grouping[~ na_loc]
