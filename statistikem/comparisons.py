@@ -8,12 +8,20 @@ from scipy import stats
 import warnings
 import re
 
+from .helpers import guess_scale
+from .helpers import fix_column_names
+from .helpers import ci_mean
+from .helpers import ci_mean_lognormal
+from .helpers import format_p
+from .helpers import format_float
+from .helpers import stars
+from .helpers import plot_table
 
 FONTSIZE = 10
 ALPHA = 0.05
 
 def compare(variables, grouping=None, data=None, plot=True, scale=None, 
-            sort=None, parametric=None, multi_test_corr='bonferroni', **kwa):
+            sort=None, parametric=None, multi_test_corr='bonferroni', summary=False, **kwa):
     """Perform univariate analysis of one or more variables
     
     Parameters
@@ -63,7 +71,7 @@ def compare(variables, grouping=None, data=None, plot=True, scale=None,
     for var, sc, par in zip(variables, scale, parametric):
         if var != grouping:
             res = compare_one(var, grouping, data=data, plot=plot, scale=sc, 
-                              parametric=par, **kwa)
+                              parametric=par, summary=summary, **kwa)
             ll.append(res)
     plt.rcParams['figure.max_open_warning'] = orig_mow
     res_df = pd.DataFrame(ll)
@@ -116,10 +124,9 @@ def compare_one(var, grouping=None, data=None, plot=True, summary=False,
     if type(var) == pd.DataFrame:
         # paired tests
         if not scale:
-            scale = _guess_scale(var.values.flatten())
+            scale = guess_scale(var.values.flatten())
         if scale == 'binary':
-            warnings.warn('paired_proportion_test not implemented.')
-            # res = paired_proportion_test(var, plot=plot, scale=scale, **kwa)
+            res = paired_proportion_test(var, plot=plot, scale=scale, **kwa)
         elif scale == 'categorical' or scale == 'continuous':
             res = paired_difference_test(var, plot=plot, scale=scale, **kwa)
         else:
@@ -129,7 +136,7 @@ def compare_one(var, grouping=None, data=None, plot=True, summary=False,
         var = _get_series(var, data)
         grouping = _get_series(grouping, data)
         if not scale:
-            scale = _guess_scale(var)
+            scale = guess_scale(var)
         if scale == 'binary':
             res = independent_proportion_test(var, grouping, plot=plot, summary=summary, scale=scale, **kwa)
         elif scale == 'categorical' or scale == 'continuous':
@@ -284,7 +291,7 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
     res = {'formula': formula, 'scale': scale, 'test': None, 'p': np.nan}
 
     mm_nona = measurements.dropna()
-    mm_nona_list = [s for name, s in mm_nona.iteritems()]
+    mm_nona_list = [s for name, s in mm_nona.items()]
     n_mm = len(mm_nona_list)
         
     tests = [['test', 'p-value']]
@@ -292,7 +299,7 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
     
     # Shapiro-Wilk test for normal distribution
     p_shapiro, p_logshapiro = [], []
-    for name, s in mm_nona.iteritems():
+    for name, s in mm_nona.items():
         if len(s) < 3 or np.ptp(s) == 0:
             p, lp = 0, 0
         else:
@@ -430,7 +437,76 @@ def independent_proportion_test(var, grouping, plot=True, summary=False, scale=N
             tcounts[complementary] = 0
             counts = tcounts.T.sort_index()
     if summary:
-        for g_name, count in counts.iteritems():
+        for g_name, count in counts.items():
+            res[str(g_name)] = f'{count.iloc[-1]}/{count.sum()} ({count.iloc[-1] / count.sum() * 100:2.0f}%)'
+    if plot:
+        table_0 = [[''] + list(g_names) + ['total']]
+        style_0 = [[None] + [f'fc_C{x}' for x in range(counts.shape[1])] + ['normal']]
+        sums = counts.sum()
+        total = sums.sum()
+        warn = lambda x: 'fc_pink' if x < 5 else ''
+        for val, row in counts.iterrows():
+            table_0.append([val] + [_perc(x, col_total) for x, col_total in zip(row, sums)] + [_perc(row.sum(), total)])
+            style_0.append([''] + ['right ' + warn(x) for x in row] + ['right'])
+        table_0.append(['total'] + [_perc(x, total) for x in sums] + [_perc(total, total)])
+        style_0.append([''] + ['right' for x in sums] + ['right'])
+        table_0.append(['missing'] + [x for x in g_missing] + [sum(g_missing)])
+        style_0.append([''] + ['right' for x in g_missing] + ['right'])
+        fig, ax = _make_fig(res, table_0, style_0)
+
+        _plot_bars(counts.T, ax[1])
+
+        ax[2].set_title('Observed vs Expected')
+        sums = counts.sum(axis=1)
+        if sums.shape[0] > 1:
+            ax[2].plot([0, sums.iloc[0]], [0, sums.iloc[1]], color='black')
+            for ii, col in counts.T.iterrows():
+                ax[2].plot(col.iloc[0], col.iloc[1], 'o')
+            ax[2].set_aspect('equal', adjustable='box')
+            ax[2].set_xlabel(sums.index[0])
+            ax[2].set_ylabel(sums.index[1])
+
+        table = plot_table(tests, style=tests_style, ax=ax[3])
+        table.auto_set_font_size(False)
+        table.set_fontsize(FONTSIZE)
+        plt.show()
+    return res
+
+def paired_proportion_test(measurements, plot=True, summary=False, scale=None, **kwa):
+    formula = f'{measurements.columns[0]} vs. {measurements.columns[1]}'
+    res = {'formula': formula, 'scale': scale, 'test': None, 'p': np.nan}
+
+    mm_nona = measurements.dropna()
+    mm_nona_list = [s for name, s in mm_nona.items()]
+    n_mm = len(mm_nona_list)
+    counts = pd.crosstab(*mm_nona_list)
+        
+    tests = [['test', 'p-value']]
+    tests_style = [['bold center'] * 2]
+    
+    if counts.shape[0] == 1:
+        # There is just single value. Let's add complementary binary value.
+        val = counts.iloc[0].name
+        complementary = {'0':1, '1':0, 'True':False, 'False':True}.get(str(val))
+        if complementary is not None:
+            tcounts = counts.T
+            tcounts[complementary] = 0
+            counts = tcounts.T.sort_index()
+    elif counts.shape == (2,2):
+        test = 'McNemar'
+        mcnemar = sm.stats.mcnemar(counts, exact=False, correction=True)
+        tests.append([test, mcnemar.pvalue])
+        mcnemar_valid = '' if (counts.iloc[0, 1] + counts.iloc[0, 1]) >= 10 else 'fc_pink'
+        tests_style.append([mcnemar_valid, 'fc_pink' if mcnemar.pvalue < ALPHA else ''])
+    else:
+        pass
+
+    return tests
+
+
+
+    if summary:
+        for g_name, count in counts.items():
             res[str(g_name)] = f'{count.iloc[-1]} ({count.iloc[-1] / count.sum() * 100:2.0f}%)'
     if plot:
         table_0 = [[''] + list(g_names) + ['total']]
@@ -484,118 +560,9 @@ def startr():
             warnings.warn(f'Fisher test of table larger than 2x2 requires R and rpy2 installed.')
     return r_stats
 
-def plot_table(cells, style=None, global_style=None, colWidths=None,
-               rowHeights=None, loc=None, bbox=None, ax=None, **kwa):
-    if not ax:
-        fig, ax = plt.subplots()
-    if global_style is None:
-        if mpl.rcParams['axes.facecolor'] == '#E5E5E5':
-            global_style = 'modern'
-        else:
-            global_style = 'oldschool'
-    if loc is None or loc == 'full':
-        loc, bbox = None, [0, 0, 1, 1]
-        
-    # Now create the table
-    table = mpl.table.Table(ax, loc, bbox, **kwa)
-    height = table._approx_text_height() * 1.2
-
-    cells = np.array(cells, dtype=object)
-    nrows, ncols = cells.shape
-
-    style = np.array(style, dtype=object)
-    if style.ndim == 0:
-        style = style[None, None]
-    if style.ndim == 1:
-        pass
-    elif style.ndim == 2 and style.shape[1] == 1 and ncols != 1:
-        style = np.repeat(style, ncols, axis=1)
-#     return style
-#     print(style)
-
-    styles = {
-        'bold' : {'fontproperties' : {'weight' : 'bold'}},
-        'normal' : {'fontproperties' : {'weight' : 'normal'}},
-        'center' : {'loc' : 'center'},
-        'left' : {'loc' : 'left'},
-        'right' : {'loc' : 'right'},
-        'open' : {'edges' : 'open'},
-        'closed' : {'edges' : 'closed'}
-    }
-        
-    if colWidths is None:
-        colWidths = [1.0 / ncols] * ncols
-
-    # Add the cells
-    for rn in range(cells.shape[0]):
-        for cn in range(cells.shape[1]):
-            ckw = {}
-            
-            # format cell contents
-            cell = cells[rn, cn]
-            if cell is None:
-                text = ''
-            elif isinstance(cell, str):
-                text = cell
-                ckw['loc'] = 'left'
-            elif isinstance(cell, float):
-                text = format_float(cell)
-                ckw['loc'] = 'right'
-            elif isinstance(cell, (int, np.integer)):
-                text = str(cell)
-                ckw['loc'] = 'right'
-            else:
-                text = str(cell)
-                ckw['loc'] = 'left'
-                
-            # apply default style (this should eventually move to Cell)
-            if global_style == 'modern':
-                ckw['edgecolor'] = 'white'
-                if rn == 0:
-                    ckw['fontproperties'] = {'weight' : 'bold'}
-                    ckw['loc'] = 'center'
-                    ckw['facecolor'] = 'silver'
-                elif rn % 2:
-                    ckw['facecolor'] = 'whitesmoke'
-                else:
-                    ckw['facecolor'] = 'gainsboro'
-            else:
-                if rn == 0:
-                    ckw['fontproperties'] = {'weight' : 'bold'}
-                    ckw['loc'] = 'center'
-            
-            # apply local style
-            if rn < style.shape[0] and cn < style.shape[1] and style[rn, cn]:
-                cs = style[rn, cn]
-                if isinstance(cs, str):
-                    for key in cs.split():
-                        if key.startswith('fc_'):
-                            ckw['facecolor'] = key[3:]
-                        else:
-                            ckw.update(styles[key])
-                elif isinstance(cs, dict):
-                    ckw.update(cs)
-            table.edges = ckw.pop('edges', None)
-            table.add_cell(rn, cn,
-                           width=colWidths[cn], 
-                           height=height,
-                           text=text,
-                            **ckw)
-
-    ax.add_table(table)
-#     table.scale(1, 1.5)
-#     ax.set_facecolor('pink')
-    ax.get_xaxis().set_visible(False)
-    ax.get_yaxis().set_visible(False)
-    ax.axis('off')
-    return table
-
-
-
-
 
 def _make_fig(res, table, style, rows=1):
-    fig = plt.figure(figsize=(14, 2), constrained_layout=False)
+    fig = plt.figure(figsize=(14, 2), constrained_layout=False, dpi=75)
     spec = fig.add_gridspec(rows, 4, width_ratios=(4,2,2,2), hspace=.2)
     ax = 4 * [None]
     ax[0] = fig.add_subplot(spec[:,0])
@@ -630,7 +597,6 @@ def _plot_histograms(all_values, groups_list, possibly_normal, possibly_lognorma
             Y = stats.norm.pdf(X, loc=s.mean(), scale=s.std(ddof=1)) * len(s) * binwidth
             ax[1][ii].plot(X, Y, color='k')#f'C{ii}'
 
-
 def _plot_bars(counts, ax):
     
     ax = ax[0]
@@ -645,23 +611,6 @@ def _plot_bars(counts, ax):
     ax.set_xticks(X_base)
     ax.set_xticklabels(group.index)
     
-def _guess_scale(var):
-    unq = pd.unique(var)
-    n_unq = np.sum(~ pd.isna(unq))
-    if n_unq <= 2:
-        return 'binary'
-    elif n_unq <= np.sqrt(var.size):
-        return 'categorical'
-    elif var.dtype in [float, int, np.integer]:
-        return 'continuous'
-    else:
-        raise ValueError('Variable type not recognized.')
-
-def fix_column_names(df):
-    # transtable = ''.maketrans(' .', '__')
-    regex = re.compile(r'\W+')
-    df.columns = [regex.sub('_', col).strip('_')  for col in df.columns]
-
 def _split_to_groups(var, grouping):
     grouping_na = grouping.isna()
     grouping_na_sum = grouping_na.sum()
@@ -695,69 +644,3 @@ def _get_series(var, df):
     else:
         raise ValueError(f'Dataframe not passed.')
 
-def ci_mean(series, level=0.95):
-    mean = series.mean()
-    q = (level + 1) / 2
-    hci = series.sem() * stats.t.ppf(q, len(series))
-    return {'mean' : mean, 'min' : mean - hci, 'max' : mean + hci}
-
-# Ulf Olsson (2005) Confidence Intervals for the Mean of a Log-Normal Distribution, 
-# Journal of Statistics Education, 13:1
-def ci_mean_lognormal(x, level=0.95):
-    n = len(x)
-    y = np.log(x)
-    var_y = np.var(y, ddof=1)
-    ln_mean = np.mean(y) + var_y / 2
-    q = (level + 1) / 2
-    ln_sem = np.sqrt(var_y / n + var_y**2 / 2 / (n - 1))
-    hci = stats.t.ppf(q, len(y)) * ln_sem
-    return {'mean' : np.exp(ln_mean), 
-            'min'  : np.exp(ln_mean - hci), 
-            'max'  : np.exp(ln_mean + hci)}
-
-def format_p(p, style='NEJM'):
-    """
-    According to NEJM statistical guidelines for authors (A.1.g):
-    In general, P values larger than 0.01 should be reported to two decimal 
-    places, and those between 0.01 and 0.001 to three decimal places; 
-    P values smaller than 0.001 should be reported as P<0.001. 
-    Notable exceptions to this policy include P values arising from tests 
-    associated with stopping rules in clinical trials or from genomewide 
-    association studies.
-    """
-    if hasattr(p, '__iter__') and type(p) != str:
-        return [format_p(p_i) for p_i in p]
-    if pd.isna(p):
-        return ''
-    if p > 1.0:
-        raise ValueError(f'P value cannot be > 1.0. Received {p:.2f}.')
-    if style == 'NEJM':
-        if p == 1.0: return '1.0'
-        elif p > 0.01: return f'{p:.2f}'
-        elif p > 0.001: return f'{p:.3f}'
-        else: return '<0.001'
-    else:
-        if p == 1.0:
-            return '1.0'
-        elif p < 0.001:
-            return '<0.001'
-        else:
-            return f'{p:.{2 if p > 0.2 else 3}f}'
-
-def format_float(x, precision=2):
-    if 1 <= x < 10000:
-        return f'{x:#.{precision}f}'
-    else:
-        return f'{x:#.{precision}g}'
-
-def stars(p):
-    if hasattr(p, '__iter__') and type(p) != str:
-        return [stars(p_i) for p_i in p]
-    if p < 0.001:
-        return '***'
-    elif p < 0.01:
-        return '**'
-    elif p < 0.05:
-        return '*'
-    else:
-        return ''
