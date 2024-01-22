@@ -21,7 +21,7 @@ FONTSIZE = 10
 ALPHA = 0.05
 
 def compare(variables, grouping=None, data=None, plot=True, scale=None, 
-            sort=None, parametric=None, multi_test_corr='bonferroni', summary=False, **kwa):
+            parametric=None, multi_test_corr='holm-sidak', summary=True, **kwa):
     """Perform univariate analysis of one or more variables
     
     Parameters
@@ -41,7 +41,7 @@ def compare(variables, grouping=None, data=None, plot=True, scale=None,
     parametric : bool, optional
         Force parametric or non-parametric tests. By default it is decided
         by the Shapiro-Wilk test of normality.
-    multi_test_corr : str, default='bonferroni'
+    multi_test_corr : str, default='holm-sidak'
         Method of multiple testing correction of the p-values. Possibilities 
         include: 'bonferroni', 'sidak', 'holm-sidak', 'holm' and other. Please
         see documentation to `statsmodels.stats.multitest.multipletests`.
@@ -49,8 +49,9 @@ def compare(variables, grouping=None, data=None, plot=True, scale=None,
     Returns
     -------
     DataFrame with results of the comparisons containing columns:
-        formula : R-style description of the model
-        scale : scale of the variable
+        endog : endogenous (dependent) variable
+        exog : exogenous (independent) variable
+        scale : scale of the endogenous variable
         test : the statistical test used
         p : the p-value
         If the `summary` parameter is true, all groups and their summaries are
@@ -66,22 +67,20 @@ def compare(variables, grouping=None, data=None, plot=True, scale=None,
         parametric = list(parametric) + [None] * (len(variables) - len(parametric))
     else:
         parametric = [parametric] * len(variables)
-    ll = []
+    results = []
     orig_mow = plt.rcParams['figure.max_open_warning'] = 0
     for var, sc, par in zip(variables, scale, parametric):
         if var != grouping:
             res = compare_one(var, grouping, data=data, plot=plot, scale=sc, 
                               parametric=par, summary=summary, **kwa)
-            ll.append(res)
+            results.append(res)
     plt.rcParams['figure.max_open_warning'] = orig_mow
-    res_df = pd.DataFrame(ll)
-    p_corr = sm.stats.multipletests(res_df['p'], method=multi_test_corr)[1]
-    res_df['p_corr'] = p_corr
-    if sort:
-        res_df = res_df.sort_values(sort)
-    return res_df
+    results = pd.DataFrame(results)
+    p_corr = sm.stats.multipletests(results['p'], method=multi_test_corr)[1]
+    results['p_corr'] = p_corr
+    return results
 
-def compare_one(var, grouping=None, data=None, plot=True, summary=False, 
+def compare_one(var, grouping=None, data=None, plot=True, summary=True, 
                 scale=None, parametric=None, **kwa):
     """Describe and compare one grouped variable
     
@@ -112,8 +111,9 @@ def compare_one(var, grouping=None, data=None, plot=True, summary=False,
     -------
     dict
         result of comparison:
-        formula : R-style description of the model
-        scale : scale of the variable
+        endog : endogenous (dependent) variable
+        exog : exogenous (independent) variable
+        scale : scale of the endogenous variable
         test : the statistical test used
         p : the p-value
         If the `summary` parameter is true, all groups and their summaries are
@@ -147,7 +147,7 @@ def compare_one(var, grouping=None, data=None, plot=True, summary=False,
     return res
 
 def independent_difference_test(var, grouping, plot=True, summary=False, scale=None, parametric=None, **kwa):
-    res = {'formula': f'{var.name} ~ {grouping.name}', 'scale': scale, 'test': None, 'p': np.nan}
+    res = {'endog': var.name, 'scale': scale, 'exog': grouping.name, 'test': None, 'p': np.nan}
     na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(var, grouping)
     n_groups = len(gg)
         
@@ -157,15 +157,11 @@ def independent_difference_test(var, grouping, plot=True, summary=False, scale=N
     # Shapiro-Wilk test for normal distribution in groups
     p_shapiro, p_logshapiro = [], []
     for group in gg:
-        if len(group) < 3 or np.ptp(group) == 0:
-            p, lp = 0, 0
-        else:
-            _, p = stats.shapiro(group)
-            _, lp = stats.shapiro(np.log(group)) if group.min() > 0 else (0, 0)
+        p, lp = test_for_normality(group)
         p_shapiro.append(p)
         p_logshapiro.append(lp)
-    possibly_normal = np.array(p_shapiro) > ALPHA / n_groups # Bonferroni correction
-    possibly_lognormal = np.array(p_logshapiro) > ALPHA / n_groups # Bonferroni correction
+    possibly_normal = np.array(p_shapiro) > ALPHA
+    possibly_lognormal = np.array(p_logshapiro) > ALPHA
     
     if np.all(possibly_normal):
         distribution = 'normal'
@@ -255,10 +251,10 @@ def independent_difference_test(var, grouping, plot=True, summary=False, scale=N
         fig, ax = _make_fig(res, table_0, style_0, rows=hist_rows)
         
         if scale == 'continuous':
-            _plot_histograms(var_nona.values.flatten(), gg, possibly_normal, possibly_lognormal, ax)
+            _plot_histograms(var_nona.values.flatten(), gg, possibly_normal, possibly_lognormal, ax[1])
         elif scale == 'categorical':
-            counts = var_nona.groupby([var_nona,grp_nona]).count().unstack().T
-            _plot_bars(counts, ax[1])
+            counts = var_nona.groupby([var_nona,grp_nona]).count().unstack()
+            _plot_bars(counts.T, ax[1][0])
         else:
             raise Exception(f'unknown scale: {scale}')
         
@@ -287,9 +283,8 @@ def independent_difference_test(var, grouping, plot=True, summary=False, scale=N
 
 
 def paired_difference_test(measurements, plot=True, scale=None, parametric=None, **kwa):
-    formula = f'{measurements.columns[0]} vs. {measurements.columns[1]}'
-    res = {'formula': formula, 'scale': scale, 'test': None, 'p': np.nan}
-
+    res = {'endog': measurements.columns[0], 'scale': scale, 'exog':measurements.columns[1], 
+           'test': None, 'p': np.nan}
     mm_nona = measurements.dropna()
     mm_nona_list = [s for name, s in mm_nona.items()]
     n_mm = len(mm_nona_list)
@@ -300,11 +295,7 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
     # Shapiro-Wilk test for normal distribution
     p_shapiro, p_logshapiro = [], []
     for name, s in mm_nona.items():
-        if len(s) < 3 or np.ptp(s) == 0:
-            p, lp = 0, 0
-        else:
-            _, p = stats.shapiro(s)
-            _, lp = stats.shapiro(np.log(s)) if s.min() > 0 else (0, 0)
+        p, lp = test_for_normality(group)
         p_shapiro.append(p)
         p_logshapiro.append(lp)
     possibly_normal = np.array(p_shapiro) > ALPHA
@@ -363,12 +354,12 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
         
         if scale == 'continuous':
             _plot_histograms(mm_nona.values.flatten(), mm_nona_list,
-                             possibly_normal, possibly_lognormal, ax)
+                             possibly_normal, possibly_lognormal, ax[1])
         elif scale == 'categorical':
             print(mm_nona.shape)
             counts = (mm_nona.melt().assign(count=1).groupby(['variable', 'value'])
                       .count().unstack('variable').fillna(0))
-            _plot_bars(counts.T, ax[1])
+            _plot_bars(counts.T, ax[1][0])
         else:
             raise Exception(f'unknown scale: {scale}')
         
@@ -390,7 +381,7 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
 
 
 def independent_proportion_test(var, grouping, plot=True, summary=False, scale=None, **kwa):
-    res = {'formula': f'{var.name} ~ {grouping.name}', 'scale': scale, 'test': None, 'p': np.nan}
+    res = {'endog': var.name, 'scale': scale, 'exog': grouping.name, 'test': None, 'p': np.nan}
     na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(var, grouping)
     n_groups = len(gg)
     
@@ -454,7 +445,7 @@ def independent_proportion_test(var, grouping, plot=True, summary=False, scale=N
         style_0.append([''] + ['right' for x in g_missing] + ['right'])
         fig, ax = _make_fig(res, table_0, style_0)
 
-        _plot_bars(counts.T, ax[1])
+        _plot_bars(counts.T, ax[1][0])
 
         ax[2].set_title('Observed vs Expected')
         sums = counts.sum(axis=1)
@@ -473,8 +464,8 @@ def independent_proportion_test(var, grouping, plot=True, summary=False, scale=N
     return res
 
 def paired_proportion_test(measurements, plot=True, summary=False, scale=None, **kwa):
-    formula = f'{measurements.columns[0]} vs. {measurements.columns[1]}'
-    res = {'formula': formula, 'scale': scale, 'test': None, 'p': np.nan}
+    res = {'endog': measurements.columns[0], 'scale': scale, 'exog':measurements.columns[1], 
+           'test': None, 'p': np.nan}
 
     mm_nona = measurements.dropna()
     mm_nona_list = [s for name, s in mm_nona.items()]
@@ -501,7 +492,7 @@ def paired_proportion_test(measurements, plot=True, summary=False, scale=None, *
     else:
         pass
 
-    return tests
+    # return tests
 
 
 
@@ -523,7 +514,7 @@ def paired_proportion_test(measurements, plot=True, summary=False, scale=None, *
         style_0.append([''] + ['right' for x in g_missing] + ['right'])
         fig, ax = _make_fig(res, table_0, style_0)
 
-        _plot_bars(counts.T, ax[1])
+        _plot_bars(counts.T, ax[1][0])
 
         ax[2].set_title('Observed vs Expected')
         sums = counts.sum(axis=1)
@@ -572,7 +563,7 @@ def _make_fig(res, table, style, rows=1):
     ax[2] = fig.add_subplot(spec[:,2])
     ax[3] = fig.add_subplot(spec[:,3])
     
-    ax[0].set_title(res['formula'], loc='left')
+    ax[0].set_title(f"{res['endog']} ~ {res['exog']}", loc='left')
     ax[1][0].set(title=res['scale'])
     table_artist = plot_table(table, style=style, loc='full', ax=ax[0])
     table_artist.auto_set_font_size(False)
@@ -586,20 +577,19 @@ def _plot_histograms(all_values, groups_list, possibly_normal, possibly_lognorma
     X = np.linspace(all_values.min(), all_values.max(), 100)
     _, bins = np.histogram(all_values, nbins)
     for ii, s in enumerate(groups_list):
-        ax[1][ii].hist(groups_list[ii], bins=bins, color=f'C{ii}')
+        ax[ii].hist(groups_list[ii], bins=bins, color=f'C{ii}')
         if ii < (n_mm - 1):
-#                     ax[1][ii].tick_params(bottom=False, labelbottom=False)
-            ax[1][ii].get_xaxis().set_visible(False)
-#                     ax[1][ii].set_xticks([])
+#                     ax[ii].tick_params(bottom=False, labelbottom=False)
+            ax[ii].get_xaxis().set_visible(False)
+#                     ax[ii].set_xticks([])
         binwidth = bins[1] - bins[0]
         normal, lognormal = possibly_normal[ii], possibly_lognormal[ii]
         if normal:
             Y = stats.norm.pdf(X, loc=s.mean(), scale=s.std(ddof=1)) * len(s) * binwidth
-            ax[1][ii].plot(X, Y, color='k')#f'C{ii}'
+            ax[ii].plot(X, Y, color='k')#f'C{ii}'
 
 def _plot_bars(counts, ax):
     
-    ax = ax[0]
     n_groups = counts.shape[0]
     w_total = 0.8
     w_single = w_total / n_groups
@@ -644,3 +634,10 @@ def _get_series(var, df):
     else:
         raise ValueError(f'Dataframe not passed.')
 
+def test_for_normality(s):
+    if len(s) < 3 or np.ptp(s) == 0:
+        return 0, 0
+    else:
+        _, p = stats.shapiro(s)
+        _, lp = stats.shapiro(np.log(s)) if s.min() > 0 else (0, 0)
+        return p, lp
