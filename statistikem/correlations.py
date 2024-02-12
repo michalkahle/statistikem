@@ -45,14 +45,23 @@ def correlate(rows, cols=None, type='Spearman', data=None, plot=True):
     pp = pd.DataFrame(pp, index=rows.columns, columns=cols.columns)
     if plot:
         if rr.shape[1] < 15:
-            nrows, ncols, figsize = 1, 2, (rr.shape[1]*1.2+1, rr.shape[0]/2+1)
+            fig, ax = plt.subplots(
+                nrows=1, ncols=2, 
+                figsize=(rr.shape[1]*1.2+2, rr.shape[0]/2+1), 
+                sharey=rr.shape[1] < 5,
+                dpi=75
+            )
         else:
-            nrows, ncols, figsize = 2, 1, (rr.shape[0]/2+1, rr.shape[1]*.8+1)
+            fig, ax = plt.subplots(
+                nrows=2, ncols=1, 
+                figsize=(rr.shape[1]/2+1, rr.shape[0]*.8+2.5), 
+                sharex=rr.shape[0] < 5,
+                dpi=75
+            )
             
-        fig, ax = plt.subplots(nrows, ncols, figsize=figsize, dpi=75)
-        sns.heatmap(rr, cmap='coolwarm', center=0, cbar=True, annot=True, fmt='.2f', ax=ax[0])
+        sns.heatmap(rr, cmap='coolwarm', center=0, cbar=False, annot=True, fmt='.2f', ax=ax[0])
         ax[0].set_title(f'{type} correlations')
-        sns.heatmap(pp, cmap=p_cmap, cbar=True, annot=True, ax=ax[1]) #'pink'
-        ax[1].set_title(f'{type} correlations [p-values]')
+        sns.heatmap(pp, cmap=p_cmap, cbar=False, annot=True, ax=ax[1]) #'pink'
+        ax[1].set_title(f'p-values')
         fig.tight_layout()
     return rr, pp
