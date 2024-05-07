@@ -4,23 +4,29 @@ from matplotlib import pyplot as plt
 import lifelines
 from lifelines.utils import median_survival_times
 import matplotlib
+from statistikem.helpers import format_p
 
 def kmplot(durations, 
-           grouping, 
            event, 
+           grouping=None, 
            data=None, 
            counts=True,
            ymin=None, 
            ax=None, 
+           xlabel=None,
            plot='survival',
-           ploc='lower left', **kwargs):
+           ploc=None,
+           show_censors=True,
+           tests=True,
+           title=None,
+           **kwargs):
     '''
     Plot Kaplan-Meier curves for survival analysis.
 
     Parameters:
     durations (str): Column name in `data` that represents the durations.
-    grouping (str): Column name in `data` that represents the grouping variable.
-    event (str, optional): Column name in `data` that represents the event of interest. Defaults to 'Amputation'.
+    event (str): Column name in `data` that represents the event of interest.
+    grouping (str, optional): Column name in `data` that represents the grouping variable.
     data (DataFrame, optional): Pandas DataFrame that contains the data. Defaults to None.
     counts (bool, optional): If True, add at risk counts at the bottom of the plot. Defaults to True.
     ymin (float, optional): The lower limit for the y-axis. Defaults to None.
@@ -35,10 +41,16 @@ def kmplot(durations,
     models = []
     previous = []
     pp = []
-    res = {}
+    res = []
+    if ploc is None:
+        ploc = 'lower left' if plot == 'survival' else 'lower right'
     if ax is None:
-        fig, ax = plt.subplots()
-    group_names =  data[grouping].cat.categories if data[grouping].dtype == 'category' else data[grouping].dropna().unique()
+        fig, ax = plt.subplots(dpi=75)
+    if grouping is None:
+        grouping = 'All'
+        data = data.copy()
+        data[grouping] = 'All'
+    group_names =  data[grouping].cat.categories if data[grouping].dtype == 'category' else np.sort(data[grouping].dropna().unique())
     for g_name in group_names:
         group = data[data[grouping] == g_name]
         
@@ -46,40 +58,76 @@ def kmplot(durations,
         kmf = lifelines.KaplanMeierFitter()
         kmf.fit(group[durations], group[event], label=str(g_name))
         ci = median_survival_times(kmf.confidence_interval_).values[0]
-        res[g_name] = f"{kmf.median_survival_time_:.2f} CI95=({ci[0]:.2f}, {ci[1]:.2f})" 
+        res.append([grouping, g_name, f"{kmf.median_survival_time_:.2f} CI95=({ci[0]:.2f}, {ci[1]:.2f})"])
         if plot == 'survival':
-            kmf.plot(show_censors=True, 
+            kmf.plot(show_censors=show_censors, 
                       censor_styles=dict(marker='|', alpha=.3), 
-                      # loc=kwargs.get('xloc'),
-                      ax=ax)
+                       ax=ax, **kwargs)
         else:
-            kmf.plot_cumulative_density(show_censors=True, 
+            kmf.plot_cumulative_density(show_censors=show_censors, 
                       censor_styles=dict(marker='|', alpha=.3), 
-                      # loc=kwargs.get('xloc'),
-                      ax=ax)
+                      ax=ax, **kwargs)
         if counts:
             models.append(kmf)
-        for contrast, contrast_g_name in previous:
-            p = lifelines.statistics.logrank_test(
-                contrast[durations], group[durations], contrast[event], group[event]).p_value
-            p_label = 'p=' if len(group_names) < 3 else f'{contrast_g_name} vs {g_name}: p='
-            pp.append(p_label + format_p(p))
+        if tests:
+            for contrast, contrast_g_name in previous:
+                p = lifelines.statistics.logrank_test(
+                    contrast[durations], group[durations], contrast[event], group[event]).p_value
+                p_label = 'p=' if len(group_names) < 3 else f'{contrast_g_name} vs {g_name}: p='
+                pp.append(p_label + format_p(p))
         previous.append((group, g_name))
         
     lifelines.plotting.add_at_risk_counts(*models, rows_to_show=['At risk'],  ax=ax) #, 'Censored', 'Events'
-    ax.set_title(f'{grouping}')
+    ax.set_title(title if title is not None else grouping)
     # ax.set_ylabel('Survival')
     if len(pp) > 0:
         at = matplotlib.offsetbox.AnchoredText('\n'.join(pp), loc=ploc, frameon=False)
         ax.add_artist(at)
-    ax.set_ylim([ymin, 1.0])
+    if ymin is not None:
+        ax.set_ylim([ymin, 1.0])
+
     # steps = {0.0:5, 0.5:6}[ymin]
     # y = np.linspace(ymin, 1, steps)
     # ax.set_yticks(y)
     # ax.set_yticklabels((y * 100).astype(int))
-    ax.set_xlabel('Years Since ACT')
+    ax.set_xlabel(xlabel if xlabel is not None else durations)
     # ax.legend(loc='lower left')
     [ch.set_edgecolor(None) for ch in ax.get_children() if isinstance(ch, matplotlib.collections.PolyCollection)]
+    plt.tight_layout()
     return res
 
+def kmplots(duration, event, cols, data, xlabel=None, plot='survival', **kwargs):
+    res = []
+    n = len(cols)
+    r = n//4 + (0 if n%4==0 else 1)
+    fig, axs = plt.subplots(r, 4, squeeze=True, figsize=(20, 5*r))
+    axs = axs.flatten()
+    for ii, col in enumerate(cols):
+        res += kmplot(duration, event, col, data=data, ax=axs[ii], plot=plot, xlabel=xlabel, **kwargs)
+    fig.tight_layout()
+    return pd.DataFrame(res, columns=['factor', 'group', 'median'])
 
+def kmtable(durations, 
+            event, 
+            grouping=None,
+            data=None, 
+            times=[1, 3, 5, 10, 15, 20, 25], 
+            **kwargs):
+    table = {}
+    if grouping is None:
+        grouping = 'All'
+        data = data.copy()
+        data[grouping] = 'All'
+    group_names =  data[grouping].cat.categories if data[grouping].dtype == 'category' else np.sort(data[grouping].dropna().unique())
+    for g_name in group_names:
+        group = data[data[grouping] == g_name]
+        kmf = lifelines.KaplanMeierFitter()
+        kmf.fit(group[durations], group[event], label=str(g_name), timeline=times)
+        s = kmf.survival_function_.iloc[:,0]
+        ci_l = kmf.confidence_interval_.iloc[:,0]
+        ci_u = kmf.confidence_interval_.iloc[:,1]
+        ll = [f'{proportion*100:.0f}%' for proportion in s]
+        # ll = [f'{s[time]:.2f}, 95% CI [{ci_l[time]:.2f}, {ci_u[time]:.2f}]' for time in s.index]
+        table[g_name] = ll
+    table = pd.DataFrame(table, index=s.index)
+    return table

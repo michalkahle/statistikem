@@ -15,7 +15,7 @@ def guess_scale(var):
     elif var.dtype in [float, int, np.integer]:
         return 'continuous'
     else:
-        raise ValueError('Variable type not recognized.')
+        raise ValueError(f'Variable `{var.name}` type not recognized.')
 
 def fix_column_names(df):
     # transtable = ''.maketrans(' .', '__')
@@ -42,7 +42,7 @@ def ci_mean_lognormal(x, level=0.95):
             'min'  : np.exp(ln_mean - hci), 
             'max'  : np.exp(ln_mean + hci)}
 
-def format_p(p, style='NEJM'):
+def format_p(p, style=None):
     """
     According to NEJM statistical guidelines for authors (A.1.g):
     In general, P values larger than 0.01 should be reported to two decimal 
