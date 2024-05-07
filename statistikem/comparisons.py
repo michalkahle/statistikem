@@ -20,18 +20,18 @@ from .helpers import plot_table
 FONTSIZE = 10
 ALPHA = 0.05
 
-def compare(variables, grouping=None, data=None, plot=True, scale=None, 
+def compare(predictors, grouping=None, data=None, plot=True, scale=None, 
             parametric=None, multi_test_corr='holm-sidak', summary=True, **kwa):
     """Perform univariate analysis of one or more variables
     
     Parameters
     ----------
-    variables : str, list of str
+    predictors : str, list of str
         Name or list of names of DataFrame columns to be analyzed.
     grouping : str
         Name of column that will be used for grouping of observations.
     data : DataFrame
-        A DataFrame containing all analyzed variables and grouping variable.
+        A DataFrame containing all analyzed predictors and grouping variable.
     plot : bool, default=True
         Plot a graphical summary.
     summary : bool, default=False
@@ -49,29 +49,29 @@ def compare(variables, grouping=None, data=None, plot=True, scale=None,
     Returns
     -------
     DataFrame with results of the comparisons containing columns:
-        endog : endogenous (dependent) variable
-        exog : exogenous (independent) variable
+        predictor : endogenous (dependent) variable
+        outcome : exogenous (independent) variable
         scale : scale of the endogenous variable
         test : the statistical test used
         p : the p-value
         If the `summary` parameter is true, all groups and their summaries are
             included. This is useful for Table 1 creation of clinical trials.
     """
-    if type(variables) == str:
-        variables = [variables]
+    if type(predictors) == str:
+        predictors = [predictors]
     if hasattr(scale, '__iter__') and type(scale) != str:
-        scale = list(scale) + [None] * (len(variables) - len(scale))
+        scale = list(scale) + [None] * (len(predictors) - len(scale))
     else:
-        scale = [scale] * len(variables)
+        scale = [scale] * len(predictors)
     if hasattr(parametric, '__iter__') and type(parametric) != str:
-        parametric = list(parametric) + [None] * (len(variables) - len(parametric))
+        parametric = list(parametric) + [None] * (len(predictors) - len(parametric))
     else:
-        parametric = [parametric] * len(variables)
+        parametric = [parametric] * len(predictors)
     results = []
     orig_mow = plt.rcParams['figure.max_open_warning'] = 0
-    for var, sc, par in zip(variables, scale, parametric):
-        if var != grouping:
-            res = compare_one(var, grouping, data=data, plot=plot, scale=sc, 
+    for predictor, sc, par in zip(predictors, scale, parametric):
+        if predictor != grouping:
+            res = compare_one(predictor, grouping, data=data, plot=plot, scale=sc, 
                               parametric=par, summary=summary, **kwa)
             results.append(res)
     plt.rcParams['figure.max_open_warning'] = orig_mow
@@ -80,13 +80,13 @@ def compare(variables, grouping=None, data=None, plot=True, scale=None,
     results['p_corr'] = p_corr
     return results
 
-def compare_one(var, grouping=None, data=None, plot=True, summary=True, 
+def compare_one(predictor, grouping=None, data=None, plot=True, summary=True, 
                 scale=None, parametric=None, **kwa):
     """Describe and compare one grouped variable
     
     Parameters
     ----------
-    var : str, list of str, Series or DataFrame
+    predictor : str, list of str, Series or DataFrame
         Name or list of names of DataFrame columns, Series or DataFrame with
         data. In case of single column or Series the observations are assumed
         to be independent. In case of multiple columns repeated or related
@@ -95,7 +95,7 @@ def compare_one(var, grouping=None, data=None, plot=True, summary=True,
         Name of column or a Series that will be used for grouping independent
         observations.
     data : DataFrame, optional
-        If names of columns are given for `var` and `grouping` then DataFrame
+        If names of columns are given for `predictor` and `grouping` then DataFrame
         containing these columns must be given.
     plot : bool, default=True
         Plot graphical summary.
@@ -111,44 +111,44 @@ def compare_one(var, grouping=None, data=None, plot=True, summary=True,
     -------
     dict
         result of comparison:
-        endog : endogenous (dependent) variable
-        exog : exogenous (independent) variable
+        predictor : endogenous (dependent) variable
+        outcome : exogenous (independent) variable
         scale : scale of the endogenous variable
         test : the statistical test used
         p : the p-value
         If the `summary` parameter is true, all groups and their summaries are
             included. This is useful for Table 1 creation of clinical trials.
 """
-    if type(var) == list:
-        var = data[var]
-    if type(var) == pd.DataFrame:
+    if type(predictor) == list:
+        predictor = data[predictor]
+    if type(predictor) == pd.DataFrame:
         # paired tests
         if not scale:
-            scale = guess_scale(var.values.flatten())
+            scale = guess_scale(predictor.values.flatten())
         if scale == 'binary':
-            res = paired_proportion_test(var, plot=plot, scale=scale, **kwa)
+            res = paired_proportion_test(predictor, plot=plot, scale=scale, **kwa)
         elif scale == 'categorical' or scale == 'continuous':
-            res = paired_difference_test(var, plot=plot, scale=scale, **kwa)
+            res = paired_difference_test(predictor, plot=plot, scale=scale, **kwa)
         else:
             raise Exception(f'Unknown scale: {scale}')
     else:
         # independent tests
-        var = _get_series(var, data)
+        predictor = _get_series(predictor, data)
         grouping = _get_series(grouping, data)
         if not scale:
-            scale = guess_scale(var)
+            scale = guess_scale(predictor)
         if scale == 'binary':
-            res = independent_proportion_test(var, grouping, plot=plot, summary=summary, scale=scale, **kwa)
+            res = independent_proportion_test(predictor, grouping, plot=plot, summary=summary, scale=scale, **kwa)
         elif scale == 'categorical' or scale == 'continuous':
-            res = independent_difference_test(var, grouping, plot=plot, 
+            res = independent_difference_test(predictor, grouping, plot=plot, 
                 summary=summary, scale=scale, parametric=parametric, **kwa)
         else:
             raise Exception(f'Unknown scale: {scale}')
     return res
 
-def independent_difference_test(var, grouping, plot=True, summary=False, scale=None, parametric=None, **kwa):
-    res = {'endog': var.name, 'scale': scale, 'exog': grouping.name, 'test': None, 'p': np.nan}
-    na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(var, grouping)
+def independent_difference_test(predictor, grouping, plot=True, summary=False, scale=None, parametric=None, **kwa):
+    res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name, 'test': None, 'p': np.nan}
+    na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(predictor, grouping)
     n_groups = len(gg)
         
     tests = [['test', 'p-value']]
@@ -167,7 +167,7 @@ def independent_difference_test(var, grouping, plot=True, summary=False, scale=N
         distribution = 'normal'
     elif np.all(possibly_lognormal):
         distribution = 'lognormal'
-        warnings.warn(f'Variable "{var.name}" might have lognormal distribution.')
+        warnings.warn(f'Variable "{predictor.name}" might have lognormal distribution.')
     else:
         distribution = None
     if parametric is None:
@@ -283,7 +283,7 @@ def independent_difference_test(var, grouping, plot=True, summary=False, scale=N
 
 
 def paired_difference_test(measurements, plot=True, scale=None, parametric=None, **kwa):
-    res = {'endog': measurements.columns[0], 'scale': scale, 'exog':measurements.columns[1], 
+    res = {'predictor': measurements.columns[0], 'scale': scale, 'outcome':measurements.columns[1], 
            'test': None, 'p': np.nan}
     mm_nona = measurements.dropna()
     mm_nona_list = [s for name, s in mm_nona.items()]
@@ -380,9 +380,9 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
 
 
 
-def independent_proportion_test(var, grouping, plot=True, summary=False, scale=None, **kwa):
-    res = {'endog': var.name, 'scale': scale, 'exog': grouping.name, 'test': None, 'p': np.nan}
-    na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(var, grouping)
+def independent_proportion_test(predictor, grouping, plot=True, summary=False, scale=None, **kwa):
+    res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name, 'test': None, 'p': np.nan}
+    na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(predictor, grouping)
     n_groups = len(gg)
     
     tests = [['test', 'p-value']]
@@ -464,7 +464,7 @@ def independent_proportion_test(var, grouping, plot=True, summary=False, scale=N
     return res
 
 def paired_proportion_test(measurements, plot=True, summary=False, scale=None, **kwa):
-    res = {'endog': measurements.columns[0], 'scale': scale, 'exog':measurements.columns[1], 
+    res = {'predictor': measurements.columns[0], 'scale': scale, 'outcome':measurements.columns[1], 
            'test': None, 'p': np.nan}
 
     mm_nona = measurements.dropna()
@@ -563,7 +563,7 @@ def _make_fig(res, table, style, rows=1):
     ax[2] = fig.add_subplot(spec[:,2])
     ax[3] = fig.add_subplot(spec[:,3])
     
-    ax[0].set_title(f"{res['endog']} ~ {res['exog']}", loc='left')
+    ax[0].set_title(f"{res['outcome']} ~ {res['predictor']}", loc='left')
     ax[1][0].set(title=res['scale'])
     table_artist = plot_table(table, style=style, loc='full', ax=ax[0])
     table_artist.auto_set_font_size(False)
@@ -635,6 +635,7 @@ def _get_series(var, df):
         raise ValueError(f'Dataframe not passed.')
 
 def test_for_normality(s):
+    s = s.dropna()
     if len(s) < 3 or np.ptp(s) == 0:
         return 0, 0
     else:
