@@ -193,3 +193,16 @@ def plot_table(cells, style=None, global_style=None, colWidths=None,
     ax.get_yaxis().set_visible(False)
     ax.axis('off')
     return table
+
+
+def _get_series(var, df):
+    if var is None:
+        return None
+    elif type(var) == pd.Series:
+        return var
+    elif df is not None and var in df.columns:
+        return df[var]
+    elif df is not None:
+        raise ValueError(f'"{var}" not found in the dataframe.')
+    else:
+        raise ValueError(f'Dataframe not passed.')

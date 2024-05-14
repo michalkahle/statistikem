@@ -11,6 +11,7 @@ def reload_package():
     """
     Reloads all modules in the package.
     """
+    importlib.reload(helpers)
     importlib.reload(comparisons)
     importlib.reload(helpers)
     importlib.reload(correlations)

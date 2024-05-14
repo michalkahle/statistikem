@@ -8,6 +8,8 @@ from scipy import stats
 import warnings
 import re
 
+from statistikem.helpers import _get_series
+
 from .helpers import guess_scale
 from .helpers import fix_column_names
 from .helpers import ci_mean
@@ -621,18 +623,6 @@ def _split_to_groups(var, grouping):
         gg = [var_nona[grp_nona == g] for g in glu]
         g_missing = [na_loc[grouping == g].sum() for g in glu]
     return na_loc, var_nona, grp_nona, g_names, gg, g_missing
-
-def _get_series(var, df):
-    if var is None:
-        return None
-    elif type(var) == pd.Series:
-        return var
-    elif df is not None and var in df.columns:
-        return df[var]
-    elif df is not None:
-        raise ValueError(f'"{var}" not found in the dataframe.')
-    else:
-        raise ValueError(f'Dataframe not passed.')
 
 def test_for_normality(s):
     s = s.dropna()
