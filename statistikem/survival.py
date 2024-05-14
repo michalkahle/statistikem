@@ -113,7 +113,8 @@ def kmtable(durations,
             event, 
             grouping=None,
             data=None, 
-            times=[1, 3, 5, 10, 15, 20, 25], 
+            times=[1, 3, 5, 10, 15, 20, 25],
+            ci95=False,
             **kwargs):
     table = {}
     if grouping is None:
@@ -126,10 +127,12 @@ def kmtable(durations,
         kmf = lifelines.KaplanMeierFitter()
         kmf.fit(group[durations], group[event], label=str(g_name), timeline=times)
         s = kmf.survival_function_.iloc[:,0]
-        ci_l = kmf.confidence_interval_.iloc[:,0]
-        ci_u = kmf.confidence_interval_.iloc[:,1]
-        ll = [f'{proportion*100:.0f}%' for proportion in s]
-        # ll = [f'{s[time]:.2f}, 95% CI [{ci_l[time]:.2f}, {ci_u[time]:.2f}]' for time in s.index]
+        if ci95:
+            ci_l = kmf.confidence_interval_.iloc[:,0]
+            ci_u = kmf.confidence_interval_.iloc[:,1]
+            ll = [f'{s[time]:.2f} ({ci_l[time]:.2f}, {ci_u[time]:.2f})' for time in s.index]
+        else:
+            ll = [f'{proportion*100:.0f}%' for proportion in s]
         table[g_name] = ll
     table = pd.DataFrame(table, index=s.index)
     return table
