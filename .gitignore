@@ -3,3 +3,4 @@
 __pycache__/
 statistikem.egg-info/
 *.ipynb
+.vscode
