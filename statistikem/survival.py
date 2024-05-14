@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 from matplotlib import pyplot as plt
 import lifelines
-from lifelines.utils import median_survival_times
 import matplotlib
 from statistikem.helpers import format_p
 
@@ -19,6 +18,7 @@ def kmplot(durations,
            show_censors=True,
            tests=True,
            title=None,
+           quantile=0.5, # median
            **kwargs):
     '''
     Plot Kaplan-Meier curves for survival analysis.
@@ -57,8 +57,9 @@ def kmplot(durations,
     
         kmf = lifelines.KaplanMeierFitter()
         kmf.fit(group[durations], group[event], label=str(g_name))
-        ci = median_survival_times(kmf.confidence_interval_).values[0]
-        res.append([grouping, g_name, f"{kmf.median_survival_time_:.2f} CI95=({ci[0]:.2f}, {ci[1]:.2f})"])
+        q = lifelines.utils.qth_survival_time(quantile, kmf.survival_function_)
+        ci = lifelines.utils.qth_survival_times(quantile, kmf.confidence_interval_).values[0]
+        res.append([grouping, g_name, f"{q:.2f} CI95=({ci[0]:.2f}, {ci[1]:.2f})"])
         if plot == 'survival':
             kmf.plot(show_censors=show_censors, 
                       censor_styles=dict(marker='|', alpha=.3), 
@@ -105,7 +106,8 @@ def kmplots(duration, event, cols, data, xlabel=None, plot='survival', **kwargs)
     for ii, col in enumerate(cols):
         res += kmplot(duration, event, col, data=data, ax=axs[ii], plot=plot, xlabel=xlabel, **kwargs)
     fig.tight_layout()
-    return pd.DataFrame(res, columns=['factor', 'group', 'median'])
+    q_label = 'median survival time' if kwargs.get('quantile') is None else f'{kwargs.get("quantile")*100:.0f} percentile survival time'
+    return pd.DataFrame(res, columns=['factor', 'group', q_label])
 
 def kmtable(durations, 
             event, 
