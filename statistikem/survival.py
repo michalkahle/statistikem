@@ -4,6 +4,7 @@ from matplotlib import pyplot as plt
 import lifelines
 import matplotlib
 from statistikem.helpers import format_p
+from statistikem.helpers import _get_series
 
 def kmplot(durations, 
            event, 
@@ -37,7 +38,10 @@ def kmplot(durations,
 
     Returns:
     dict: A dictionary where keys are group names and values are median survival times with 95% confidence intervals.
-'''
+    '''
+    durations = _get_series(durations, data)
+    event = _get_series(event, data)
+    grouping = _get_series(grouping, data)
     models = []
     previous = []
     pp = []
@@ -47,19 +51,17 @@ def kmplot(durations,
     if ax is None:
         fig, ax = plt.subplots(dpi=75)
     if grouping is None:
-        grouping = 'All'
-        data = data.copy()
-        data[grouping] = 'All'
-    group_names =  data[grouping].cat.categories if data[grouping].dtype == 'category' else np.sort(data[grouping].dropna().unique())
+        grouping = pd.Series(len(event) * ['All'])
+    group_names =  grouping.cat.categories if grouping.dtype == 'category' else np.sort(grouping.dropna().unique())
     for g_name in group_names:
-        group = data[data[grouping] == g_name]
-        
+        g_durations = durations[grouping == g_name]
+        g_event = event[grouping == g_name]
     
         kmf = lifelines.KaplanMeierFitter()
-        kmf.fit(group[durations], group[event], label=str(g_name))
+        kmf.fit(g_durations, g_event, label=str(g_name))
         q = lifelines.utils.qth_survival_time(quantile, kmf.survival_function_)
         ci = lifelines.utils.qth_survival_times(quantile, kmf.confidence_interval_).values[0]
-        res.append([grouping, g_name, f"{q:.2f} CI95=({ci[0]:.2f}, {ci[1]:.2f})"])
+        res.append([grouping.name, g_name, f"{q:.2f} CI95=({ci[0]:.2f}, {ci[1]:.2f})"])
         if plot == 'survival':
             kmf.plot(show_censors=show_censors, 
                       censor_styles=dict(marker='|', alpha=.3), 
@@ -71,15 +73,15 @@ def kmplot(durations,
         if counts:
             models.append(kmf)
         if tests:
-            for contrast, contrast_g_name in previous:
+            for contrast_durations, contrast_event, contrast_name in previous:
                 p = lifelines.statistics.logrank_test(
-                    contrast[durations], group[durations], contrast[event], group[event]).p_value
-                p_label = 'p=' if len(group_names) < 3 else f'{contrast_g_name} vs {g_name}: p='
+                    contrast_durations, g_durations, contrast_event, g_event).p_value
+                p_label = 'p=' if len(group_names) < 3 else f'{contrast_name} vs {g_name}: p='
                 pp.append(p_label + format_p(p))
-        previous.append((group, g_name))
+        previous.append((g_durations, g_event, g_name))
         
     lifelines.plotting.add_at_risk_counts(*models, rows_to_show=['At risk'],  ax=ax) #, 'Censored', 'Events'
-    ax.set_title(title if title is not None else grouping)
+    ax.set_title(title if title is not None else grouping.name)
     # ax.set_ylabel('Survival')
     if len(pp) > 0:
         at = matplotlib.offsetbox.AnchoredText('\n'.join(pp), loc=ploc, frameon=False)
@@ -91,7 +93,7 @@ def kmplot(durations,
     # y = np.linspace(ymin, 1, steps)
     # ax.set_yticks(y)
     # ax.set_yticklabels((y * 100).astype(int))
-    ax.set_xlabel(xlabel if xlabel is not None else durations)
+    ax.set_xlabel(xlabel if xlabel is not None else durations.name)
     # ax.legend(loc='lower left')
     [ch.set_edgecolor(None) for ch in ax.get_children() if isinstance(ch, matplotlib.collections.PolyCollection)]
     plt.tight_layout()
@@ -116,16 +118,18 @@ def kmtable(durations,
             times=[1, 3, 5, 10, 15, 20, 25],
             ci95=False,
             **kwargs):
+    durations = _get_series(durations, data)
+    event = _get_series(event, data)
+    grouping = _get_series(grouping, data)
     table = {}
     if grouping is None:
-        grouping = 'All'
-        data = data.copy()
-        data[grouping] = 'All'
-    group_names =  data[grouping].cat.categories if data[grouping].dtype == 'category' else np.sort(data[grouping].dropna().unique())
+        grouping = pd.Series(len(event) * ['All'])
+    group_names =  grouping.cat.categories if grouping.dtype == 'category' else np.sort(grouping.dropna().unique())
     for g_name in group_names:
-        group = data[data[grouping] == g_name]
+        g_durations = durations[grouping == g_name]
+        g_event = event[grouping == g_name]
         kmf = lifelines.KaplanMeierFitter()
-        kmf.fit(group[durations], group[event], label=str(g_name), timeline=times)
+        kmf.fit(g_durations, g_event, label=str(g_name), timeline=times)
         s = kmf.survival_function_.iloc[:,0]
         if ci95:
             ci_l = kmf.confidence_interval_.iloc[:,0]
