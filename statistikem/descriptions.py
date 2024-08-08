@@ -63,4 +63,6 @@ def describe(data, parametric=None, scales=None, plot=True):
         results.append(res)
     if plot:
         fig.tight_layout()
+        for n in range(n+1, n_rows*6):
+            ax[n].axis('off')
     return pd.DataFrame(results)
