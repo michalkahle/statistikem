@@ -7,18 +7,50 @@ from statistikem.helpers import format_p
 from statistikem.helpers import _get_series, guess_scale
 import warnings
 
-def cox(predictors, data, duration_col, event_col):
+def cox(predictors, data, duration_col, event_col, cluster_col=None, check_ph=False):
     if type(predictors) == str:
         predictors = [predictors]
     fig, ax = plt.subplots(1,1, figsize=(6, .5 + .5*len(predictors)))
-    cph = lifelines.CoxPHFitter().fit(data[['duration'] + [event_col] + predictors].dropna(), 
-                                      duration_col=duration_col, event_col=event_col)
+    cph = lifelines.CoxPHFitter()
+    cols = [duration_col, event_col] + predictors
+    if cluster_col is not None:
+        cols += [cluster_col]
+    data = data[cols].dropna()
+    cph.fit(data, duration_col=duration_col, event_col=event_col, cluster_col=cluster_col)
     cph.plot(hazard_ratios=True, ax=ax)
     maxlen = max([len(x) for x in predictors])
     res = [f'{r.name: <{maxlen}} HR={r["exp(coef)"]:.3f} ({r["exp(coef) lower 95%"]:.3f}, {r["exp(coef) upper 95%"]:.3f}), p={r["p"]:.3f}' 
           for name, r in cph.summary.iterrows()]
     ax.set_ylim(-0.5, len(predictors)-0.5)
+    if check_ph:
+        cph.check_assumptions(data, p_value_threshold=0.05, advice=True, show_plots=True)
     return '\n'.join(res)
+
+def univariate_cox(predictors, data, duration_col, event_col, cluster_col=None, **kwargs):
+    if type(predictors) == str:
+        predictors = [predictors]
+    n = len(predictors)
+    fig, ax = plt.subplots(n, 1, figsize=(6, .5 + 1.0*n), squeeze=False, sharex=kwargs.pop('sharex', None))
+    
+    res = []
+    for n, var in enumerate(predictors):
+        cph = lifelines.CoxPHFitter()
+        cols = [duration_col, event_col, var]
+        if cluster_col is not None:
+            cols += [cluster_col]
+        cph.fit(data[cols].dropna(), duration_col=duration_col, event_col=event_col, cluster_col=cluster_col)
+        cph.plot(hazard_ratios=True, ax=ax[n,0])
+        r = cph.summary
+        res.append({
+            'predictor': var,
+            'HR': r.loc[var, 'exp(coef)'], 
+            '95%CI_low': r.loc[var, "exp(coef) lower 95%"], 
+            '95%CI_high': r.loc[var, "exp(coef) upper 95%"],
+            'p': r.loc[var, "p"]
+        })
+    fig.tight_layout()
+    return pd.DataFrame(res)
+
 
 def survplot(durations, 
            event, 
