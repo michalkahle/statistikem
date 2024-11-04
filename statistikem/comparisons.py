@@ -8,11 +8,10 @@ from scipy import stats
 import warnings
 import re
 
-from statistikem.helpers import _get_series
-
+from .helpers import _get_series
 from .helpers import guess_scale
 from .helpers import fix_column_names
-from .helpers import ci_mean
+from .helpers import ci_mean_normal
 from .helpers import ci_mean_lognormal
 from .helpers import format_p
 from .helpers import format_float
@@ -22,8 +21,8 @@ from .helpers import plot_table
 FONTSIZE = 10
 ALPHA = 0.05
 
-def compare(predictors, grouping=None, data=None, plot=True, scale=None, 
-            parametric=None, multi_test_corr='holm-sidak', summary=True, **kwa):
+def compare(predictors, grouping=None, subject=None, data=None, plot=True, scale=None, 
+            parametric=None, multi_test_corr='holm-sidak', **kwa):
     """Perform univariate analysis of one or more variables
     
     Parameters
@@ -36,8 +35,6 @@ def compare(predictors, grouping=None, data=None, plot=True, scale=None,
         A DataFrame containing all analyzed predictors and grouping variable.
     plot : bool, default=True
         Plot a graphical summary.
-    summary : bool, default=False
-        Include summary of the groups in output. Useful for Table 1 creation.
     scale : {'binary', 'categorical', 'continuous'}, optional
         Scale of the variable (for plots). If not given it is guessed from data.
     parametric : bool, optional
@@ -56,7 +53,7 @@ def compare(predictors, grouping=None, data=None, plot=True, scale=None,
         scale : scale of the endogenous variable
         test : the statistical test used
         p : the p-value
-        If the `summary` parameter is true, all groups and their summaries are
+        All groups and their summaries are also
             included. This is useful for Table 1 creation of clinical trials.
     """
     if type(predictors) == str:
@@ -72,9 +69,9 @@ def compare(predictors, grouping=None, data=None, plot=True, scale=None,
     results = []
     orig_mow = plt.rcParams['figure.max_open_warning'] = 0
     for predictor, sc, par in zip(predictors, scale, parametric):
-        if predictor != grouping:
-            res = compare_one(predictor, grouping, data=data, plot=plot, scale=sc, 
-                              parametric=par, summary=summary, **kwa)
+        if predictor != grouping and predictor != subject:
+            res = compare_one(predictor, grouping, subject, data=data, plot=plot, scale=sc, 
+                              parametric=par, **kwa)
             results.append(res)
     plt.rcParams['figure.max_open_warning'] = orig_mow
     results = pd.DataFrame(results)
@@ -82,7 +79,7 @@ def compare(predictors, grouping=None, data=None, plot=True, scale=None,
     results['p_corr'] = p_corr
     return results
 
-def compare_one(predictor, grouping=None, data=None, plot=True, summary=True, 
+def compare_one(predictor, grouping=None, subject=None, data=None, plot=True, 
                 scale=None, parametric=None, **kwa):
     """Describe and compare one grouped variable
     
@@ -101,8 +98,6 @@ def compare_one(predictor, grouping=None, data=None, plot=True, summary=True,
         containing these columns must be given.
     plot : bool, default=True
         Plot graphical summary.
-    summary : bool, default=False
-        Include summary of the groups in output. Useful for Table 1 creation.
     scale : {'binary', 'categorical', 'continuous'}, optional
         Scale of the variable (for plots). If not given it is guessed from data.
     parametric : bool, optional
@@ -118,39 +113,33 @@ def compare_one(predictor, grouping=None, data=None, plot=True, summary=True,
         scale : scale of the endogenous variable
         test : the statistical test used
         p : the p-value
-        If the `summary` parameter is true, all groups and their summaries are
+        All groups and their summaries are also
             included. This is useful for Table 1 creation of clinical trials.
 """
-    if type(predictor) == list:
-        predictor = data[predictor]
-    if type(predictor) == pd.DataFrame:
-        # paired tests
-        if not scale:
-            scale = guess_scale(predictor.values.flatten())
-        if scale == 'binary':
-            res = paired_proportion_test(predictor, plot=plot, scale=scale, **kwa)
-        elif scale == 'categorical' or scale == 'continuous':
-            res = paired_difference_test(predictor, plot=plot, scale=scale, **kwa)
+    predictor = _get_series(predictor, data)
+    grouping = _get_series(grouping, data)
+    subject = _get_series(subject, data)
+    if not scale:
+        scale = guess_scale(predictor)
+
+
+    if scale == 'binary':
+        if subject is not None:
+            res = _paired_proportion(predictor, grouping, subject, scale, plot=plot, **kwa)
         else:
-            raise Exception(f'Unknown scale: {scale}')
+            res = _independent_proportion(predictor, grouping, scale, plot=plot, **kwa)
+    elif scale == 'categorical' or scale == 'continuous':
+        if subject is not None:
+            res = _paired_difference(predictor, grouping, subject, scale, plot=plot, parametric=parametric, **kwa)
+        else:
+            res = _independent_difference(predictor, grouping, scale, plot=plot, parametric=parametric, **kwa)
     else:
-        # independent tests
-        predictor = _get_series(predictor, data)
-        grouping = _get_series(grouping, data)
-        if not scale:
-            scale = guess_scale(predictor)
-        if scale == 'binary':
-            res = independent_proportion_test(predictor, grouping, plot=plot, summary=summary, scale=scale, **kwa)
-        elif scale == 'categorical' or scale == 'continuous':
-            res = independent_difference_test(predictor, grouping, plot=plot, 
-                summary=summary, scale=scale, parametric=parametric, **kwa)
-        else:
-            raise Exception(f'Unknown scale: {scale}')
+        raise Exception(f'Unknown scale: {scale}')
     return res
 
-def independent_difference_test(predictor, grouping, plot=True, summary=False, scale=None, parametric=None, **kwa):
+def _independent_difference(predictor, grouping, scale, plot=True, parametric=None, **kwa):
     res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name, 'test': None, 'p': np.nan}
-    na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(predictor, grouping)
+    var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(predictor, grouping)
     n_groups = len(gg)
         
     tests = [['test', 'p-value']]
@@ -229,19 +218,18 @@ def independent_difference_test(predictor, grouping, plot=True, summary=False, s
         else:
             res['test'], res['p'] = 'Kruskal-Wallis', p_kw
             
-    if summary:
-        for g, g_name in zip(gg, g_names):
-            if parametric:
-                res[g_name] = format_float(np.mean(g)) + ' ±' + format_float(np.std(g, ddof=1))
-            else:
-                p25, p50, p75 = np.percentile(g, [25, 50, 75], interpolation='midpoint')
-                res[g_name] = f'{format_float(p50)} ({format_float(p25)}, {format_float(p75)})'
+    for g, g_name in zip(gg, g_names):
+        if parametric:
+            res[g_name] = format_float(np.mean(g)) + ' ±' + format_float(np.std(g, ddof=1))
+        else:
+            p25, p50, p75 = np.percentile(g, [25, 50, 75], interpolation='midpoint')
+            res[g_name] = f'{format_float(p50)} ({format_float(p25)}, {format_float(p75)})'
 
     if plot:
         table_0 = [
             [None] + list(g_names) + ['total'],
             ['n'] + [len(g) for g in gg] + [len(var_nona)],
-            ['missing'] + list(g_missing) + [na_loc.sum()],
+            ['missing'] + list(g_missing) + [sum(g_missing)],
             ['median'] + [np.median(g) for g in gg] +[np.median(var_nona)],
             ['mean'] + [np.mean(g) for g in gg] + [np.mean(var_nona)],
             ['SD'] + [np.std(g, ddof=1) for g in gg] + [np.std(var_nona, ddof=1)],
@@ -283,21 +271,20 @@ def independent_difference_test(predictor, grouping, plot=True, summary=False, s
 
 
 
-
-def paired_difference_test(measurements, plot=True, scale=None, parametric=None, **kwa):
-    res = {'predictor': measurements.columns[0], 'scale': scale, 'outcome':measurements.columns[1], 
-           'test': None, 'p': np.nan}
-    mm_nona = measurements.dropna()
-    mm_nona_list = [s for name, s in mm_nona.items()]
-    n_mm = len(mm_nona_list)
+def _paired_difference(predictor, grouping, subject, scale, plot=True, parametric=None, **kwa):
+    res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name, 'test': None, 'p': np.nan}
+    wide, nona = _pivot_paired(predictor, grouping, subject)
+        
+    # wide_list = [s for name, s in wide.items()]
+    nona_list = [s for name, s in nona.items()]
         
     tests = [['test', 'p-value']]
     tests_style = [['bold center'] * 2]
     
     # Shapiro-Wilk test for normal distribution
     p_shapiro, p_logshapiro = [], []
-    for name, s in mm_nona.items():
-        p, lp = test_for_normality(group)
+    for s in nona_list:
+        p, lp = test_for_normality(s)
         p_shapiro.append(p)
         p_logshapiro.append(lp)
     possibly_normal = np.array(p_shapiro) > ALPHA
@@ -307,23 +294,22 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
         distribution = 'normal'
     elif np.all(possibly_lognormal):
         distribution = 'lognormal'
+        warnings.warn(f'Distribution of {predictor.name} possibly lognormal.')
     else:
         distribution = None
         
-    if distribution == 'lognormal':
-        warnings.warn(f'{list(measurements.columns)}: all measurements possibly'
-                      'lognormal. Tests not implemented, yet!')
+        
     
-    if measurements.shape[1] == 1:
+    if nona.shape[1] == 1:
         raise NotImplementedError('Just one measurement.') # this should never happen
-    elif measurements.shape[1] == 2:
+    elif nona.shape[1] == 2:
         # t-test for the means of paired samples
-        s_t, p_t = stats.ttest_rel(*mm_nona_list)
+        s_t, p_t = stats.ttest_rel(*nona_list)
         tests.append(['paired t', p_t])
         tests_style.append(['', 'fc_pink' if p_t < ALPHA else ''])
         
         # Wilcoxon signed-rank test
-        s_rs, p_rs = stats.wilcoxon(*mm_nona_list, alternative='two-sided')
+        s_rs, p_rs = stats.wilcoxon(*nona_list, alternative='two-sided')
         tests.append(['signed-rank', p_rs])
         tests_style.append(['', 'fc_pink' if p_rs < ALPHA else ''])
         if parametric is None:
@@ -337,35 +323,41 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
         res['test'], res['p'] = 'ANOVA', None
         warnings.warn(f'ANOVA not implemented, yet!')
         
+    for s in nona_list:
+        if parametric:
+            res[s.name] = format_float(np.mean(s)) + ' ±' + format_float(np.std(s, ddof=1))
+        else:
+            p25, p50, p75 = np.percentile(s, [25, 50, 75], interpolation='midpoint')
+            res[s.name] = f'{format_float(p50)} ({format_float(p25)}, {format_float(p75)})'
 
     if plot:
         table = [
-            [None] + list(measurements.columns),
-            ['n'] + [len(s) for s in mm_nona_list],
-            ['missing'] + [measurements.shape[0] - mm_nona.shape[0]] * n_mm,
-            ['median'] + [np.median(s) for s in mm_nona_list],
-            ['mean'] + [np.mean(s) for s in mm_nona_list],
-            ['SD'] + [np.std(s, ddof=1) for s in mm_nona_list],
+            [None] + list(nona.columns),
+            ['n'] + list(wide.notna().sum(axis=0)),
+            ['missing'] + list(wide.isna().sum(axis=0)),
+            ['median'] + list(wide.median(axis=0)),
+            ['mean'] + list(wide.mean(axis=0)),
+            ['SD'] + list(wide.std(axis=0)),
         ]
         style = [[None] * len(table[0])] * len(table)
-        style[0] = [None] + [f'fc_C{x}' for x in range(measurements.shape[1])]
+        style[0] = [None] + [f'fc_C{x}' for x in range(nona.shape[1])]
         style[4] = [None] + ['fc_lightgreen' if x else '' for x in possibly_normal]
         
-        hist_rows = measurements.shape[1] if scale == 'continuous' else 1
+        hist_rows = nona.shape[1] if scale == 'continuous' else 1
         fig, ax = _make_fig(res, table, style, rows=hist_rows)
         
         if scale == 'continuous':
-            _plot_histograms(mm_nona.values.flatten(), mm_nona_list,
+            _plot_histograms(nona.values.flatten(), nona_list,
                              possibly_normal, possibly_lognormal, ax[1])
         elif scale == 'categorical':
-            print(mm_nona.shape)
-            counts = (mm_nona.melt().assign(count=1).groupby(['variable', 'value'])
+            print(nona.shape)
+            counts = (nona.melt().assign(count=1).groupby(['variable', 'value'])
                       .count().unstack('variable').fillna(0))
             _plot_bars(counts.T, ax[1][0])
         else:
             raise Exception(f'unknown scale: {scale}')
         
-        for x, s in enumerate(mm_nona_list):
+        for x, s in enumerate(nona_list):
             sm.qqplot(s, ax=ax[2], markerfacecolor='none', markeredgecolor=f'C{x}', line='s')
         ax[2].set_title('Q-Q normal~sample')
         ax[2].get_xaxis().label.set_visible(False)
@@ -382,9 +374,9 @@ def paired_difference_test(measurements, plot=True, scale=None, parametric=None,
 
 
 
-def independent_proportion_test(predictor, grouping, plot=True, summary=False, scale=None, **kwa):
+def _independent_proportion(predictor, grouping, scale, plot=True, **kwa):
     res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name, 'test': None, 'p': np.nan}
-    na_loc, var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(predictor, grouping)
+    var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(predictor, grouping)
     n_groups = len(gg)
     
     tests = [['test', 'p-value']]
@@ -429,9 +421,8 @@ def independent_proportion_test(predictor, grouping, plot=True, summary=False, s
             tcounts = counts.T
             tcounts[complementary] = 0
             counts = tcounts.T.sort_index()
-    if summary:
-        for g_name, count in counts.items():
-            res[str(g_name)] = f'{count.iloc[-1]}/{count.sum()} ({count.iloc[-1] / count.sum() * 100:2.0f}%)'
+    for g_name, count in counts.items():
+        res[str(g_name)] = f'{count.iloc[-1]}/{count.sum()} ({count.iloc[-1] / count.sum() * 100:2.0f}%)'
     if plot:
         table_0 = [[''] + list(g_names) + ['total']]
         style_0 = [[None] + [f'fc_C{x}' for x in range(counts.shape[1])] + ['normal']]
@@ -465,7 +456,7 @@ def independent_proportion_test(predictor, grouping, plot=True, summary=False, s
         plt.show()
     return res
 
-def paired_proportion_test(measurements, plot=True, summary=False, scale=None, **kwa):
+def _paired_proportion(measurements, scale, plot=True, **kwa):
     res = {'predictor': measurements.columns[0], 'scale': scale, 'outcome':measurements.columns[1], 
            'test': None, 'p': np.nan}
 
@@ -498,11 +489,10 @@ def paired_proportion_test(measurements, plot=True, summary=False, scale=None, *
 
 
 
-    if summary:
-        for g_name, count in counts.items():
-            res[str(g_name)] = f'{count.iloc[-1]} ({count.iloc[-1] / count.sum() * 100:2.0f}%)'
+    for g_name, count in counts.items():
+        res[str(g_name)] = f'{count.iloc[-1]} ({count.iloc[-1] / count.sum() * 100:2.0f}%)'
     if plot:
-        table_0 = [[''] + list(g_names) + ['total']]
+        table_0 = [[''] + list(counts.columns) + ['total']]
         style_0 = [[None] + [f'fc_C{x}' for x in range(counts.shape[1])] + ['normal']]
         sums = counts.sum()
         total = sums.sum()
@@ -512,8 +502,8 @@ def paired_proportion_test(measurements, plot=True, summary=False, scale=None, *
             style_0.append([''] + ['right ' + warn(x) for x in row] + ['right'])
         table_0.append(['total'] + [_perc(x, total) for x in sums] + [_perc(total, total)])
         style_0.append([''] + ['right' for x in sums] + ['right'])
-        table_0.append(['missing'] + [x for x in g_missing] + [sum(g_missing)])
-        style_0.append([''] + ['right' for x in g_missing] + ['right'])
+        # table_0.append(['missing'] + [x for x in g_missing] + [sum(g_missing)])
+        # style_0.append([''] + ['right' for x in g_missing] + ['right'])
         fig, ax = _make_fig(res, table_0, style_0)
 
         _plot_bars(counts.T, ax[1][0])
@@ -622,11 +612,25 @@ def _split_to_groups(var, grouping):
         g_names = [str(g) for g in glu]
         gg = [var_nona[grp_nona == g] for g in glu]
         g_missing = [na_loc[grouping == g].sum() for g in glu]
-    return na_loc, var_nona, grp_nona, g_names, gg, g_missing
+    return var_nona, grp_nona, g_names, gg, g_missing
+
+def _pivot_paired(var, grouping, subject):
+    grouping_na = grouping.isna()
+    grouping_na_sum = grouping_na.sum()
+    if grouping_na_sum > 0:
+        var = var[~ grouping_na]
+        grouping = grouping[~ grouping_na]
+        warnings.warn(f'{grouping_na_sum} observations removed because of missing values in grouping variable.')
+    var.index = pd.MultiIndex.from_arrays([subject, grouping])
+    wide = var.unstack()
+    nona = wide.dropna(axis=0)
+    if len(wide) > len(nona):
+        warnings.warn(f'{len(wide) - len(nona)} subjects removed because of missing values in predictor variable.')
+    return wide, nona
 
 def test_for_normality(s):
     s = s.dropna()
-    if len(s) < 3 or np.ptp(s) == 0:
+    if len(s) < 3 or s.dtype == 'category' or np.ptp(s.values) == 0:
         return 0, 0
     else:
         _, p = stats.shapiro(s)

@@ -123,8 +123,9 @@ def survplot(durations,
         grouping = pd.Series(len(event) * ['All'])
     group_names =  grouping.cat.categories if grouping.dtype == 'category' else np.sort(grouping.dropna().unique())
     for g_name in group_names:
-        g_durations = durations[grouping == g_name]
-        g_event = event[grouping == g_name]
+        group_index = (grouping == g_name).values
+        g_durations = durations[group_index]
+        g_event = event[group_index]
     
         if estimator == 'KM':
             model = lifelines.KaplanMeierFitter()

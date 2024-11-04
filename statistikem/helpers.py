@@ -22,15 +22,45 @@ def fix_column_names(df):
     regex = re.compile(r'\W+')
     df.columns = [regex.sub('_', col).strip('_')  for col in df.columns]
 
-def ci_mean(series, level=0.95):
+def ci_mean_normal(series, level=0.95):
+    """Calculate parametrically mean and CI of a normally distributed variable.
+
+    Parameters
+    ----------
+    x : array or Series
+        Data.
+    level : float
+        Confidence level. Default 0.95.
+
+    Returns
+    -------
+    (mean, min, max)
+    """
     mean = series.mean()
     q = (level + 1) / 2
     hci = series.sem() * stats.t.ppf(q, len(series))
-    return {'mean' : mean, 'min' : mean - hci, 'max' : mean + hci}
+    return mean, mean - hci, mean + hci
 
 # Ulf Olsson (2005) Confidence Intervals for the Mean of a Log-Normal Distribution, 
 # Journal of Statistics Education, 13:1
 def ci_mean_lognormal(x, level=0.95):
+    """Calculate parametrically mean and CI of a lognormally distributed variable.
+
+    According to:
+    Ulf Olsson (2005) Confidence Intervals for the Mean of a Log-Normal Distribution, 
+    Journal of Statistics Education, 13:1
+    
+    Parameters
+    ----------
+    x : array or Series
+        Data.
+    level : float
+        Confidence level. Default 0.95.
+
+    Returns
+    -------
+    (mean, min, max)
+    """
     n = len(x)
     y = np.log(x)
     var_y = np.var(y, ddof=1)
@@ -38,9 +68,27 @@ def ci_mean_lognormal(x, level=0.95):
     q = (level + 1) / 2
     ln_sem = np.sqrt(var_y / n + var_y**2 / 2 / (n - 1))
     hci = stats.t.ppf(q, len(y)) * ln_sem
-    return {'mean' : np.exp(ln_mean), 
-            'min'  : np.exp(ln_mean - hci), 
-            'max'  : np.exp(ln_mean + hci)}
+    return np.exp(ln_mean), np.exp(ln_mean - hci), np.exp(ln_mean + hci)
+
+def ci_mean_bootstrap(s, level=0.95, as_df=True):
+    """Calculate mean and CI by bootstrap.
+
+    Parameters
+    ----------
+    x : array or Series
+        Data.
+    level : float
+        Confidence level. Default 0.95.
+
+    Returns
+    -------
+    (mean, min, max)
+    """
+    bs = stats.bootstrap((s.dropna(),), np.mean, confidence_level=.95, n_resamples=10_000)
+    mean = bs.bootstrap_distribution.mean()
+    ci_l, ci_h = bs.confidence_interval.low, bs.confidence_interval.high
+    res = pd.DataFrame([{'mean':mean, 'ci_l':ci_l, 'ci_h':ci_h}]) if as_df else mean, ci_l, ci_h
+    return res
 
 def format_p(p, style=None):
     """

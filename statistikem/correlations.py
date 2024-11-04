@@ -65,7 +65,7 @@ def correlate(rows, cols=None, kind='Spearman', data=None, plot=True):
         # https://matplotlib.org/stable/gallery/images_contours_and_fields/image_annotated_heatmap.html
         sns.heatmap(rr, cmap='coolwarm', center=0, cbar=False, annot=True, fmt='.2f', ax=ax[0])
         ax[0].set_title(f'{kind} correlations')
-        sns.heatmap(pp, cmap=p_cmap, cbar=False, annot=True, ax=ax[1]) #'pink'
+        sns.heatmap(pp, cmap=p_cmap, cbar=False, annot=True, ax=ax[1])
         ax[1].set_title(f'p-values')
         fig.tight_layout()
     return rr, pp
