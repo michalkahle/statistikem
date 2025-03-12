@@ -3,6 +3,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import lifelines
 import matplotlib
+from statistikem import helpers
 from statistikem.helpers import format_p
 from statistikem.helpers import _get_series, guess_scale
 import warnings
@@ -18,13 +19,15 @@ def cox(predictors, data, duration_col, event_col, cluster_col=None, check_ph=Fa
     data = data[cols].dropna()
     cph.fit(data, duration_col=duration_col, event_col=event_col, cluster_col=cluster_col)
     cph.plot(hazard_ratios=True, ax=ax)
-    maxlen = max([len(x) for x in predictors])
-    res = [f'{r.name: <{maxlen}} HR={r["exp(coef)"]:.3f} ({r["exp(coef) lower 95%"]:.3f}, {r["exp(coef) upper 95%"]:.3f}), p={r["p"]:.3f}' 
-          for name, r in cph.summary.iterrows()]
+    res = cph.summary.reset_index().rename({'exp(coef)':'HR', 'exp(coef) lower 95%':'HR lower 95%', 'exp(coef) upper 95%':'HR upper 95%'}, axis=1)
+    res['summary'] = res.apply(
+        lambda r: f'HR={r["HR"]:.3f} ({r["HR lower 95%"]:.3f}, {r["HR upper 95%"]:.3f}), p={format_p(r["p"])}', 
+        axis=1)
+    res['stars'] = res['p'].apply(helpers.stars)
     ax.set_ylim(-0.5, len(predictors)-0.5)
     if check_ph:
-        cph.check_assumptions(data, p_value_threshold=0.05, advice=True, show_plots=True)
-    return '\n'.join(res)
+        cph.check_assumptions(data, p_value_threshold=0.05, advice=True, show_plots=False)
+    return res[['covariate', 'summary', 'stars', 'HR', 'HR lower 95%', 'HR upper 95%', 'p']]
 
 def univariate_cox(predictors, data, duration_col, event_col, cluster_col=None, **kwargs):
     if type(predictors) == str:
@@ -83,6 +86,7 @@ def survplot(durations,
     ax (matplotlib.axes.Axes, optional): The axes upon which to draw the plot. If None, the plot is drawn on a new set of axes.
     direction (str, optional): Type of plot to draw. 'survival' for survival function, 'density' for cumulative density function. Defaults to 'survival'.
     ploc (str, optional): Location of the p-value in the plot. Defaults to 'lower left'.
+    output ('table'|'table_ci'|'median_survival'|'tests', optional): The kind of output to be returned.
     **kwargs: Arbitrary keyword arguments.
 
     Returns:

@@ -545,7 +545,7 @@ def startr():
 
 
 def _make_fig(res, table, style, rows=1):
-    fig = plt.figure(figsize=(14, 2), constrained_layout=False, dpi=75)
+    fig = plt.figure(figsize=(14, 2), constrained_layout=False)
     spec = fig.add_gridspec(rows, 4, width_ratios=(4,2,2,2), hspace=.2)
     ax = 4 * [None]
     ax[0] = fig.add_subplot(spec[:,0])

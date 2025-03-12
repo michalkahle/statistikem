@@ -4,6 +4,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
 import re
+from dotenv import load_dotenv
+import os
+import jaydebeapi
+import warnings
+from getpass import getpass
 
 def guess_scale(var):
     unq = pd.unique(var)
@@ -254,3 +259,34 @@ def _get_series(var, df):
         raise ValueError(f'"{var}" not found in the dataframe.')
     else:
         raise ValueError(f'Dataframe not passed.')
+
+def highlight(string, pattern):
+    if type(pattern) == list:
+        pattern = '(' + ')|('.join(pattern) + ')'
+    start = "\033[31m"
+    end = "\033[0m"
+    regex = re.compile(pattern, re.IGNORECASE)
+    matches = regex.finditer(string)
+    s = string
+    offset = 0
+    for match in matches:
+        start_index = match.start() + offset
+        end_index = match.end() + offset
+        s = (s[:start_index] + start + s[start_index:end_index] + end + s[end_index:])
+        offset += len(start) + len(end)
+    return s
+
+def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None, password=None, **kwargs):
+    load_dotenv()
+    env = os.getenv(server.upper())
+    env = [] if env is None else env.split(' ')
+    if url is None:
+        url = env[0] if len(env) > 0 else input('url:')
+    if user is None:
+        user = env[1] if len(env) > 1 else input('username:')
+    password = env[2] if len(env) > 2 else getpass('password:')
+    driver = os.getenv('JDBC_DRIVER')
+    with jaydebeapi.connect(driver, url, [user, password]) as connection:
+        with warnings.catch_warnings(action='ignore'):
+            return pd.read_sql_query(sql, connection, parse_dates=parse_dates, **kwargs)
+

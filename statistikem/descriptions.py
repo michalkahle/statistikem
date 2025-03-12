@@ -13,17 +13,22 @@ from statistikem import helpers
 from statistikem import comparisons
 from statistikem.comparisons import ALPHA
 
-def describe(data, parametric=None, scales=None, plot=True):
+def describe(data, parametric=None, scales=None, plot=True, summary='iqr'):
     results = []
     if type(data) == pd.core.series.Series:
         data = pd.DataFrame(data)
     if type(scales) != list:
         scales = [scales] * data.shape[1]
+    if hasattr(parametric, '__iter__') and type(parametric) != str:
+        parametric = list(parametric) + [None] * (len(data) - len(parametric))
+    else:
+        parametric = [parametric] * len(data)
+
     if plot:
         n_rows = ceil(data.shape[1] / 6)
         fig, ax = plt.subplots(n_rows, 6, figsize=(12, n_rows*2), dpi=75)
         ax = ax.flatten()
-    for n, col in enumerate(data.columns):
+    for n, (col, prmt) in enumerate(zip(data.columns, parametric)):
         s = data[col]
         nona = s.dropna()
         scale = scales[n] if scales[n] is not None else helpers.guess_scale(nona)
@@ -51,12 +56,15 @@ def describe(data, parametric=None, scales=None, plot=True):
                 warnings.warn(f'Variable "{col}" might have lognormal distribution.')
             if plot:
                 comparisons._plot_histograms(nona, [nona], [possibly_normal], [possibly_lognormal], [ax[n]])
-            if possibly_normal or parametric:
+            if possibly_normal or prmt:
                 res['description'] = helpers.format_float(np.mean(s)) + ' ± ' + helpers.format_float(np.std(s, ddof=1))
             else:
                 sum5n = np.percentile(nona, [0, 25, 50, 75, 100], method='midpoint')
-                res['description'] = [helpers.format_float(quantile) for quantile in sum5n]
-                # res['description'] = f'{helpers.format_float(sum5n[2])} ({helpers.format_float(sum5n[1])}, {helpers.format_float(sum5n[3])})'
+                if summary == 'iqr':
+                    res['description'] = f'{helpers.format_float(sum5n[2])} ({helpers.format_float(sum5n[1])}, {helpers.format_float(sum5n[3])})'
+                else:
+                    res['description'] = [helpers.format_float(quantile) for quantile in sum5n]
+                
 
         if plot:
             ax[n].set_title(col)
