@@ -2,7 +2,6 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-import sklearn
 import statsmodels.api as sm
 from scipy import stats
 import warnings

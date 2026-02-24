@@ -2,7 +2,6 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-import sklearn
 import statsmodels.api as sm
 from scipy import stats
 import warnings
@@ -325,10 +324,10 @@ def _paired_difference(predictor, grouping, subject, scale, plot=True, parametri
         
     for s in nona_list:
         if parametric:
-            res[s.name] = format_float(np.mean(s)) + ' ±' + format_float(np.std(s, ddof=1))
+            res[str(s.name)] = format_float(np.mean(s)) + ' ±' + format_float(np.std(s, ddof=1))
         else:
             p25, p50, p75 = np.percentile(s, [25, 50, 75], interpolation='midpoint')
-            res[s.name] = f'{format_float(p50)} ({format_float(p25)}, {format_float(p75)})'
+            res[str(s.name)] = f'{format_float(p50)} ({format_float(p25)}, {format_float(p75)})'
 
     if plot:
         table = [
@@ -350,9 +349,8 @@ def _paired_difference(predictor, grouping, subject, scale, plot=True, parametri
             _plot_histograms(nona.values.flatten(), nona_list,
                              possibly_normal, possibly_lognormal, ax[1])
         elif scale == 'categorical':
-            print(nona.shape)
-            counts = (nona.melt().assign(count=1).groupby(['variable', 'value'])
-                      .count().unstack('variable').fillna(0))
+            counts = (nona.melt().assign(count=1).groupby([nona.columns.name, 'value'])
+                      .count().unstack(nona.columns.name).fillna(0))
             _plot_bars(counts.T, ax[1][0])
         else:
             raise Exception(f'unknown scale: {scale}')
@@ -630,7 +628,7 @@ def _pivot_paired(var, grouping, subject):
 
 def test_for_normality(s):
     s = s.dropna()
-    if len(s) < 3 or s.dtype == 'category' or np.ptp(s.values) == 0:
+    if len(s) < 3 or s.dtype == 'category' or s.dtype == 'object' or np.ptp(s.values) == 0:
         return 0, 0
     else:
         _, p = stats.shapiro(s)

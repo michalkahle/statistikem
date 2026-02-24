@@ -14,8 +14,32 @@ from statistikem import comparisons
 from statistikem.comparisons import ALPHA
 
 def describe(data, parametric=None, scales=None, plot=True, summary='iqr'):
+    """Generates descriptive statistics for variables in a dataset.
+
+    This function analyzes each column of a pandas DataFrame or Series,
+    determines its scale (binary, categorical, or continuous), and computes
+    appropriate summary statistics. It can also generate plots to visualize
+    the distribution of each variable.
+
+    Args:
+        data (pd.DataFrame or pd.Series): Input data to analyze.
+        parametric (bool or iterable, optional): Force parametric summary (mean ± std)
+            for continuous variables. If an iterable, it's applied per variable.
+            Defaults to None, which relies on a normality test.
+        scales (str or list, optional): Specify the scale for each variable
+            ('binary', 'categorical', 'continuous'). If a list, it's applied
+            per variable. Defaults to None (auto-detects scale).
+        plot (bool, optional): If True, creates a plot for each variable.
+            Defaults to True.
+        summary (str, optional): For non-normal data, 'iqr' provides median (IQR),
+            while any other string provides the 5-number summary. Defaults to 'iqr'.
+
+    Returns:
+        pd.DataFrame: A DataFrame with summary statistics for each variable,
+            containing the columns 'var', 'scale', and 'description'.
+    """    
     results = []
-    if type(data) == pd.core.series.Series:
+    if isinstance(data, pd.Series):
         data = pd.DataFrame(data)
     if type(scales) != list:
         scales = [scales] * data.shape[1]
@@ -48,7 +72,7 @@ def describe(data, parametric=None, scales=None, plot=True, summary='iqr'):
             total = count.sum()
             res_list = ([f'{label}: {value}/{total} ({value / count.sum() * 100:.0f}%)' for label, value in count.items()])
             res['description'] = ', '.join(res_list)
-        elif scale == 'categorical' or scale == 'continuous':
+        elif scale == 'continuous':
             p, lp = comparisons.test_for_normality(nona)
             possibly_normal = p > ALPHA
             possibly_lognormal = lp > ALPHA

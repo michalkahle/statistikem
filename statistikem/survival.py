@@ -1,3 +1,4 @@
+import enum
 import pandas as pd
 import numpy as np
 from matplotlib import pyplot as plt
@@ -86,16 +87,19 @@ def survplot(durations,
     ax (matplotlib.axes.Axes, optional): The axes upon which to draw the plot. If None, the plot is drawn on a new set of axes.
     direction (str, optional): Type of plot to draw. 'survival' for survival function, 'density' for cumulative density function. Defaults to 'survival'.
     ploc (str, optional): Location of the p-value in the plot. Defaults to 'lower left'.
+    show_censors (bool|list|dict, optional): Whether to show censors. Can be a single bool, a list of bools (one per group), or a dict mapping group names to bools. Defaults to True.
     output ('table'|'table_ci'|'median_survival'|'tests', optional): The kind of output to be returned.
     **kwargs: Arbitrary keyword arguments.
 
     Returns:
     dict: A dictionary where keys are group names and values are median survival times with 95% confidence intervals.
     '''
-    table_times =  kwargs.pop('table_times', [1, 3, 5, 10, 15, 20, 25])
     durations = _get_series(durations, data)
     event = _get_series(event, data)
     grouping = _get_series(grouping, data)
+    if output in ('table', 'table_ci'):
+        table_times =  kwargs.pop('table_times', [1, 3, 5, 10, 15, 20, 25])
+
     models = []
     previous = []
     pp = []
@@ -116,9 +120,6 @@ def survplot(durations,
             event = pd.Series(event + 1, index=durations.index)
             event_of_interest = index.get_loc(event_of_interest) + 1
 
-
-
-
     if ploc is None:
         ploc = 'lower left' if direction == 'survival' else 'lower right'
     if ax is None:
@@ -126,11 +127,18 @@ def survplot(durations,
     if grouping is None:
         grouping = pd.Series(len(event) * ['All'])
     group_names =  grouping.cat.categories if grouping.dtype == 'category' else np.sort(grouping.dropna().unique())
-    for g_name in group_names:
+    for gn, g_name in enumerate(group_names):
         group_index = (grouping == g_name).values
         g_durations = durations[group_index]
         g_event = event[group_index]
-    
+
+        if isinstance(show_censors, dict):
+            group_show_censors = show_censors.get(g_name, True)
+        elif isinstance(show_censors, list):
+            group_show_censors = show_censors[gn]
+        else:
+            group_show_censors = show_censors
+
         if estimator == 'KM':
             model = lifelines.KaplanMeierFitter()
             kwargs['censor_styles'] = dict(marker='|', alpha=.3)

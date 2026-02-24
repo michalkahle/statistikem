@@ -2,8 +2,15 @@
 name = "statistikem"
 version = "0.11"
 requires-python = ">=3.8"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+dependencies = [
+    "pandas>=1.0",
+    "numpy>=1.18",
+    "matplotlib>=3.2",
+    "lifelines>=0.27",
+    "seaborn>=0.11",
+    "statsmodels>=0.12",
+    "jaydebeapi",
+    "scikit-learn>=0.24",
+    "scipy>=1.4",
 ]
+
