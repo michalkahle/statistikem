@@ -9,6 +9,7 @@ import os
 import jaydebeapi
 import warnings
 from getpass import getpass
+from IPython.display import HTML
 
 def guess_scale(var):
     unq = pd.unique(var)
@@ -17,7 +18,7 @@ def guess_scale(var):
         return 'binary'
     elif n_unq <= np.sqrt(var.size):
         return 'categorical'
-    elif var.dtype in [float, int, np.integer]:
+    elif var.dtype in [float, int, np.integer]: #, np.dtype('datetime64[ns]')
         return 'continuous'
     else:
         raise ValueError(f'Variable `{var.name}` type not recognized.')
@@ -276,7 +277,23 @@ def highlight(string, pattern):
         offset += len(start) + len(end)
     return s
 
-def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None, password=None, **kwargs):
+_SESSION_CACHE = {}
+def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None, **kwargs):
+    with jaydebeapi.connect(*_get_creds(server, url, user)) as connection:
+        with warnings.catch_warnings(action='ignore'):
+            return pd.read_sql_query(sql, connection, parse_dates=parse_dates, **kwargs)
+
+def execute_sql(sql, server=None, parse_dates=None, url=None, user=None):
+    with jaydebeapi.connect(*_get_creds(server, url, user)) as connection:
+        rows_affected = 0
+        with connection.cursor() as cursor:
+            cursor.execute(sql)
+            rows_affected = cursor.rowcount if cursor.rowcount is not None else 0
+        connection.commit()
+        return rows_affected        
+
+def _get_creds(server, url, user):
+    global _SESSION_CACHE
     load_dotenv()
     env = os.getenv(server.upper())
     env = [] if env is None else env.split(' ')
@@ -284,9 +301,29 @@ def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None
         url = env[0] if len(env) > 0 else input('url:')
     if user is None:
         user = env[1] if len(env) > 1 else input('username:')
-    password = env[2] if len(env) > 2 else getpass('password:')
+    if len(env) > 2:
+        password = env[2]
+        _SESSION_CACHE = {}
+    elif _SESSION_CACHE.get((url, user)):
+        password = _SESSION_CACHE[(url, user)]
+    else:
+        password = getpass('password:')
+        _SESSION_CACHE[(url, user)] = password
     driver = os.getenv('JDBC_DRIVER')
-    with jaydebeapi.connect(driver, url, [user, password]) as connection:
-        with warnings.catch_warnings(action='ignore'):
-            return pd.read_sql_query(sql, connection, parse_dates=parse_dates, **kwargs)
+    return (driver, url, [user, password])
+
+def table_for_mail(df):
+    return HTML(df.reset_index().to_html(index=False))
+
+
+
+
+
+
+
+
+
+
+
+
 
