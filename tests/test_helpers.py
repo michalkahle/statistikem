@@ -117,6 +117,22 @@ class TestGuessScale:
         s = pd.Series(pd.date_range("2024-01-01", periods=200, freq="D"))
         assert helpers.guess_scale(s) == "datetime"
 
+    def test_datetime_few_unique_still_datetime(self):
+        s = pd.Series(pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01"] * 30))
+        assert helpers.guess_scale(s) == "datetime"
+
+    def test_bool_dtype_is_binary(self):
+        s = pd.Series([True, False, True, True] * 25, dtype=bool)
+        assert helpers.guess_scale(s) == "binary"
+
+    def test_numeric_low_cardinality_is_categorical(self):
+        s = pd.Series([1, 2, 3, 4] * 50)
+        assert helpers.guess_scale(s) == "categorical"
+
+    def test_pandas_categorical_dtype(self):
+        s = pd.Series(pd.Categorical(["a", "b", "c", "d", "e"] * 20))
+        assert helpers.guess_scale(s) == "categorical"
+
 
 class TestCiMeanBootstrap:
     def test_returns_dataframe_by_default(self):

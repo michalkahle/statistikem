@@ -7,18 +7,19 @@ import re
 from IPython.display import HTML
 
 def guess_scale(var):
+    if pd.api.types.is_datetime64_any_dtype(var):
+        return 'datetime'
+    if pd.api.types.is_bool_dtype(var):
+        return 'binary'
     unq = pd.unique(var)
-    n_unq = np.sum(~ pd.isna(unq))
+    n_unq = int(np.sum(~ pd.isna(unq)))
     if n_unq <= 2:
         return 'binary'
-    elif n_unq <= np.sqrt(var.size):
+    if pd.api.types.is_numeric_dtype(var):
+        return 'categorical' if n_unq <= np.sqrt(var.size) else 'continuous'
+    if isinstance(var.dtype, pd.CategoricalDtype) or var.dtype == object:
         return 'categorical'
-    elif pd.api.types.is_datetime64_any_dtype(var):
-        return 'datetime'
-    elif var.dtype in [float, int, np.integer]:
-        return 'continuous'
-    else:
-        raise ValueError(f'Variable `{var.name}` type not recognized.')
+    raise ValueError(f'Variable `{var.name}` type not recognized.')
 
 def fix_column_names(df):
     # transtable = ''.maketrans(' .', '__')

@@ -7,14 +7,13 @@ from .descriptions import describe
 from .survival import survplot, survplots
 
 import importlib
+import pkgutil
 
 def reload_package():
-    """
-    Reloads all modules in the package.
-    """
-    importlib.reload(helpers)
-    importlib.reload(sql)
-    importlib.reload(comparisons)
-    importlib.reload(correlations)
-    importlib.reload(descriptions)
-    importlib.reload(survival)
+    """Reload every submodule of statistikem in-place."""
+    submodules = [importlib.import_module(f'.{name}', __name__)
+                  for _, name, _ in pkgutil.iter_modules(__path__)]
+    # Two passes so consumers re-bind to freshly reloaded leaf deps (helpers, sql).
+    for _ in range(2):
+        for module in submodules:
+            importlib.reload(module)
