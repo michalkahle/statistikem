@@ -81,7 +81,7 @@ def describe(data, parametric=None, scales=None, plot=True, summary='5 numbers')
             if plot:
                 comparisons._plot_histograms(nona, [nona], [possibly_normal], [possibly_lognormal], [ax[n]])
             if prmt or (possibly_normal and prmt is None):
-                res['description'] = helpers.format_float(np.mean(s)) + ' ± ' + helpers.format_float(np.std(s, ddof=1))
+                res['description'] = helpers.format_value(s.mean()) + ' ± ' + helpers.format_value(s.std())
             else:
                 res['description'] = helpers.get_summary(nona, summary)
         if plot:

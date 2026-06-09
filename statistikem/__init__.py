@@ -1,6 +1,6 @@
 from . import comparisons, helpers, correlations, descriptions, survival
 from .comparisons import compare, compare_one
-from .helpers import format_p, format_float, get_summary, stars, highlight, read_sql, table_for_mail
+from .helpers import format_p, format_value, get_summary, stars, highlight, read_sql, table_for_mail
 from .correlations import correlate
 from .descriptions import describe
 from .survival import survplot, survplots

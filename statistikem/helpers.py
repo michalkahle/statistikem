@@ -18,7 +18,9 @@ def guess_scale(var):
         return 'binary'
     elif n_unq <= np.sqrt(var.size):
         return 'categorical'
-    elif var.dtype in [float, int, np.integer]: #, np.dtype('datetime64[ns]')
+    elif pd.api.types.is_datetime64_any_dtype(var):
+        return 'datetime'
+    elif var.dtype in [float, int, np.integer]:
         return 'continuous'
     else:
         raise ValueError(f'Variable `{var.name}` type not recognized.')
@@ -125,21 +127,32 @@ def format_p(p, style=None):
         else:
             return f'{p:.{2 if p > 0.2 else 3}f}'
 
-def format_float(x, precision=2):
+def format_value(x, precision=2):
+    if isinstance(x, (pd.Timestamp, np.datetime64)):
+        return str(pd.Timestamp(x).date())
+    if isinstance(x, (pd.Timedelta, np.timedelta64)):
+        secs = pd.Timedelta(x).total_seconds()
+        if abs(secs) >= 86400:
+            return f'{format_value(secs / 86400, precision)} d'
+        if abs(secs) >= 3600:
+            return f'{format_value(secs / 3600, precision)} h'
+        if abs(secs) >= 60:
+            return f'{format_value(secs / 60, precision)} min'
+        return f'{format_value(secs, precision)} s'
     if 1 <= x < 10000:
         return f'{x:#.{precision}f}'
     else:
         return f'{x:#.{precision}g}'
 
 def get_summary(nona, summary):
-    sum5n = np.percentile(nona, [0, 25, 50, 75, 100], method='midpoint')
+    sum5n = nona.quantile([0, 0.25, 0.5, 0.75, 1.0], interpolation='midpoint').values
     summary_lower = str(summary).lower()
     if 'iqr' in summary_lower:
-        return f'{format_float(sum5n[2])} ({format_float(sum5n[1])}, {format_float(sum5n[3])})'
+        return f'{format_value(sum5n[2])} ({format_value(sum5n[1])}, {format_value(sum5n[3])})'
     if 'range' in summary_lower:
-        return f'{format_float(sum5n[2])} ({format_float(sum5n[0])}, {format_float(sum5n[4])})'
+        return f'{format_value(sum5n[2])} ({format_value(sum5n[0])}, {format_value(sum5n[4])})'
     if '5' in summary_lower:
-        return [format_float(quantile) for quantile in sum5n]
+        return [format_value(q) for q in sum5n]
     raise ValueError(f"'{summary}' is not supported as summary format. Choose from '5 numbers', 'median (IQR)' or 'median (range)'.")
 
 def stars(p):
@@ -207,8 +220,9 @@ def plot_table(cells, style=None, global_style=None, colWidths=None,
             elif isinstance(cell, str):
                 text = cell
                 ckw['loc'] = 'left'
-            elif isinstance(cell, float):
-                text = format_float(cell)
+            elif isinstance(cell, (float, np.datetime64, np.timedelta64,
+                                   pd.Timestamp, pd.Timedelta)):
+                text = format_value(cell)
                 ckw['loc'] = 'right'
             elif isinstance(cell, (int, np.integer)):
                 text = str(cell)

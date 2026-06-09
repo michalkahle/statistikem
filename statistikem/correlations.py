@@ -9,7 +9,7 @@ import re
 import seaborn as sns
 
 from .helpers import format_p
-from .helpers import format_float
+from .helpers import format_value
 
 p_cmap = mpl.colors.LinearSegmentedColormap('p_cmap', {
      'red':   [(0.0,  0.0, 0.0),

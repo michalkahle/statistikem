@@ -13,7 +13,7 @@ from .helpers import fix_column_names
 from .helpers import ci_mean_normal
 from .helpers import ci_mean_lognormal
 from .helpers import format_p
-from .helpers import format_float
+from .helpers import format_value
 from .helpers import get_summary
 from .helpers import stars
 from .helpers import plot_table
@@ -134,7 +134,7 @@ def compare_one(predictor, grouping=None, subject=None, data=None, plot=True,
             res = _paired_proportion(predictor, grouping, subject, scale, plot=plot, **kwa)
         else:
             res = _independent_proportion(predictor, grouping, scale, plot=plot, **kwa)
-    elif scale == 'categorical' or scale == 'continuous':
+    elif scale == 'categorical' or scale == 'continuous' or scale == 'datetime':
         if subject is not None:
             res = _paired_difference(predictor, grouping, subject, scale, plot=plot,
                                      parametric=parametric, summary=summary, **kwa)
@@ -150,7 +150,14 @@ def _independent_difference(predictor, grouping, scale, plot=True, parametric=No
     res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name, 'test': None, 'p': np.nan}
     var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(predictor, grouping)
     n_groups = len(gg)
-        
+
+    # Stats tests need numeric input. Keep a datetime view for table cells,
+    # then convert to int64 nanoseconds for everything else.
+    gg_dt, var_dt = gg, var_nona
+    if scale == 'datetime':
+        gg = [g.astype('int64') for g in gg]
+        var_nona = var_nona.astype('int64')
+
     tests = [['test', 'p-value']]
     tests_style = [['bold center'] * 2]
     
@@ -227,29 +234,35 @@ def _independent_difference(predictor, grouping, scale, plot=True, parametric=No
         else:
             res['test'], res['p'] = 'Kruskal-Wallis', p_kw
             
-    for g, g_name in zip(gg, g_names):
+    for g, g_dt, g_name in zip(gg, gg_dt, g_names):
         if parametric:
-            res[g_name] = format_float(np.mean(g)) + ' ±' + format_float(np.std(g, ddof=1))
+            sd = g.std()
+            if scale == 'datetime':
+                sd = np.timedelta64(int(sd), 'ns')
+            res[g_name] = f'{format_value(g_dt.mean())} ±{format_value(sd)}'
         else:
-            res[g_name] = get_summary(g, summary)
+            res[g_name] = get_summary(g_dt, summary)
 
     if plot:
+        sds = [g.std() for g in gg] + [var_nona.std()]
+        if scale == 'datetime':
+            sds = [np.timedelta64(int(s), 'ns') for s in sds]
         table_0 = [
             [None] + list(g_names) + ['total'],
             ['n'] + [len(g) for g in gg] + [len(var_nona)],
             ['missing'] + list(g_missing) + [sum(g_missing)],
-            ['median'] + [np.median(g) for g in gg] +[np.median(var_nona)],
-            ['mean'] + [np.mean(g) for g in gg] + [np.mean(var_nona)],
-            ['SD'] + [np.std(g, ddof=1) for g in gg] + [np.std(var_nona, ddof=1)],
+            ['median'] + [g.median() for g in gg_dt] + [var_dt.median()],
+            ['mean'] + [g.mean() for g in gg_dt] + [var_dt.mean()],
+            ['SD'] + sds,
         ]
         style_0 = [[None] * len(table_0[0])] * len(table_0)
         style_0[0] = [None] + [f'fc_C{x}' for x in range(n_groups)] + [None]
         style_0[4] = [None] + ['fc_lightgreen' if x else '' for x in possibly_normal] + [None]
-        hist_rows = n_groups if scale == 'continuous' else 1
+        hist_rows = n_groups if scale in ('continuous', 'datetime') else 1
         fig, ax = _make_fig(res, table_0, style_0, rows=hist_rows)
-        
-        if scale == 'continuous':
-            _plot_histograms(var_nona.values.flatten(), gg, possibly_normal, possibly_lognormal, ax[1])
+
+        if scale in ('continuous', 'datetime'):
+            _plot_histograms(var_nona.values.flatten(), gg, possibly_normal, possibly_lognormal, ax[1], scale=scale)
         elif scale == 'categorical':
             counts = var_nona.groupby([var_nona,grp_nona]).count().unstack()
             _plot_bars(counts.T, ax[1][0])
@@ -323,7 +336,7 @@ def _paired_difference(predictor, grouping, subject, scale, plot=True, parametri
         
     for s in nona_list:
         if parametric:
-            res[str(s.name)] = format_float(np.mean(s)) + ' ±' + format_float(np.std(s, ddof=1))
+            res[str(s.name)] = format_value(s.mean()) + ' ±' + format_value(s.std())
         else:
             res[str(s.name)] = get_summary(s, summary)
 
@@ -452,13 +465,11 @@ def _independent_proportion(predictor, grouping, scale, plot=True, **kwa):
         plt.show()
     return res
 
-def _paired_proportion(measurements, scale, plot=True, **kwa):
-    res = {'predictor': measurements.columns[0], 'scale': scale, 'outcome':measurements.columns[1], 
+def _paired_proportion(predictor, grouping, subject, scale, plot=True, **kwa):
+    res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name,
            'test': None, 'p': np.nan}
-
-    mm_nona = measurements.dropna()
+    _, mm_nona = _pivot_paired(predictor, grouping, subject)
     mm_nona_list = [s for name, s in mm_nona.items()]
-    n_mm = len(mm_nona_list)
     counts = pd.crosstab(*mm_nona_list)
         
     tests = [['test', 'p-value']]
@@ -559,7 +570,7 @@ def _make_fig(res, table, style, rows=1):
     
     return fig, ax
     
-def _plot_histograms(all_values, groups_list, possibly_normal, possibly_lognormal, ax):
+def _plot_histograms(all_values, groups_list, possibly_normal, possibly_lognormal, ax, scale=None):
     n_mm = len(groups_list)
     nbins = max([10] + [len(g) // 10 for g in groups_list])
     X = np.linspace(all_values.min(), all_values.max(), 100)
@@ -575,6 +586,12 @@ def _plot_histograms(all_values, groups_list, possibly_normal, possibly_lognorma
         if normal:
             Y = stats.norm.pdf(X, loc=s.mean(), scale=s.std(ddof=1)) * len(s) * binwidth
             ax[ii].plot(X, Y, color='k')#f'C{ii}'
+    if scale == 'datetime':
+        fmt = mpl.ticker.FuncFormatter(
+            lambda x, pos: str(pd.Timestamp(int(x), unit='ns').date()))
+        for a in ax:
+            a.xaxis.set_major_formatter(fmt)
+        plt.setp(ax[-1].xaxis.get_majorticklabels(), rotation=30, ha='right')
 
 def _plot_bars(counts, ax):
     
