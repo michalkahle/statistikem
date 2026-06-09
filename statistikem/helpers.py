@@ -92,11 +92,12 @@ def ci_mean_bootstrap(s, level=0.95, as_df=True):
     -------
     (mean, min, max)
     """
-    bs = stats.bootstrap((s.dropna(),), np.mean, confidence_level=.95, n_resamples=10_000)
+    bs = stats.bootstrap((s.dropna(),), np.mean, confidence_level=level, n_resamples=10_000)
     mean = bs.bootstrap_distribution.mean()
     ci_l, ci_h = bs.confidence_interval.low, bs.confidence_interval.high
-    res = pd.DataFrame([{'mean':mean, 'ci_l':ci_l, 'ci_h':ci_h}]) if as_df else mean, ci_l, ci_h
-    return res
+    if as_df:
+        return pd.DataFrame([{'mean': mean, 'ci_l': ci_l, 'ci_h': ci_h}])
+    return mean, ci_l, ci_h
 
 def format_p(p, style=None):
     """

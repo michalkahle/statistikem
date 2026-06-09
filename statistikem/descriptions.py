@@ -2,7 +2,6 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-import sklearn
 import statsmodels.api as sm
 from scipy import stats
 import warnings
@@ -44,9 +43,9 @@ def describe(data, parametric=None, scales=None, plot=True, summary='5 numbers')
     if type(scales) != list:
         scales = [scales] * data.shape[1]
     if hasattr(parametric, '__iter__') and type(parametric) != str:
-        parametric = list(parametric) + [None] * (len(data) - len(parametric))
+        parametric = list(parametric) + [None] * (data.shape[1] - len(parametric))
     else:
-        parametric = [parametric] * len(data)
+        parametric = [parametric] * data.shape[1]
 
     if plot:
         n_rows = ceil(data.shape[1] / 6)

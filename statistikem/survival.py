@@ -142,7 +142,7 @@ def survplot(durations,
         if estimator == 'KM':
             model = lifelines.KaplanMeierFitter()
             kwargs['censor_styles'] = dict(marker='|', alpha=.3)
-            kwargs['show_censors'] = show_censors
+            kwargs['show_censors'] = group_show_censors
             model.fit(g_durations, g_event, label=str(g_name))
             survival_function_ = model.survival_function_
         elif estimator == 'AJ':

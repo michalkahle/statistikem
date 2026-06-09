@@ -70,13 +70,16 @@ def compare(predictors, grouping=None, subject=None, data=None, plot=True, scale
     else:
         parametric = [parametric] * len(predictors)
     results = []
-    orig_mow = plt.rcParams['figure.max_open_warning'] = 0
-    for predictor, sc, par in zip(predictors, scale, parametric):
-        if predictor != grouping and predictor != subject:
-            res = compare_one(predictor, grouping, subject, data=data, plot=plot, scale=sc, 
-                              parametric=par, summary=summary, **kwa)
-            results.append(res)
-    plt.rcParams['figure.max_open_warning'] = orig_mow
+    orig_mow = plt.rcParams['figure.max_open_warning']
+    plt.rcParams['figure.max_open_warning'] = 0
+    try:
+        for predictor, sc, par in zip(predictors, scale, parametric):
+            if predictor != grouping and predictor != subject:
+                res = compare_one(predictor, grouping, subject, data=data, plot=plot, scale=sc,
+                                  parametric=par, summary=summary, **kwa)
+                results.append(res)
+    finally:
+        plt.rcParams['figure.max_open_warning'] = orig_mow
     results = pd.DataFrame(results)
     p_corr = sm.stats.multipletests(results['p'], method=multi_test_corr)[1]
     results['p_corr'] = p_corr
@@ -487,7 +490,7 @@ def _paired_proportion(predictor, grouping, subject, scale, plot=True, **kwa):
         test = 'McNemar'
         mcnemar = sm.stats.mcnemar(counts, exact=False, correction=True)
         tests.append([test, mcnemar.pvalue])
-        mcnemar_valid = '' if (counts.iloc[0, 1] + counts.iloc[0, 1]) >= 10 else 'fc_pink'
+        mcnemar_valid = '' if (counts.iloc[0, 1] + counts.iloc[1, 0]) >= 10 else 'fc_pink'
         tests_style.append([mcnemar_valid, 'fc_pink' if mcnemar.pvalue < ALPHA else ''])
     else:
         pass
@@ -633,7 +636,9 @@ def _pivot_paired(var, grouping, subject):
     if grouping_na_sum > 0:
         var = var[~ grouping_na]
         grouping = grouping[~ grouping_na]
+        subject = subject[~ grouping_na]
         warnings.warn(f'{grouping_na_sum} observations removed because of missing values in grouping variable.')
+    var = var.copy()
     var.index = pd.MultiIndex.from_arrays([subject, grouping])
     wide = var.unstack()
     nona = wide.dropna(axis=0)
