@@ -14,6 +14,7 @@ from .helpers import ci_mean_normal
 from .helpers import ci_mean_lognormal
 from .helpers import format_p
 from .helpers import format_float
+from .helpers import get_summary
 from .helpers import stars
 from .helpers import plot_table
 
@@ -21,7 +22,7 @@ FONTSIZE = 10
 ALPHA = 0.05
 
 def compare(predictors, grouping=None, subject=None, data=None, plot=True, scale=None, 
-            parametric=None, multi_test_corr='holm-sidak', **kwa):
+            parametric=None, multi_test_corr='holm-sidak', summary='median (IQR)', **kwa):
     """Perform univariate analysis of one or more variables
     
     Parameters
@@ -43,6 +44,9 @@ def compare(predictors, grouping=None, subject=None, data=None, plot=True, scale
         Method of multiple testing correction of the p-values. Possibilities 
         include: 'bonferroni', 'sidak', 'holm-sidak', 'holm' and other. Please
         see documentation to `statsmodels.stats.multitest.multipletests`.
+    summary : str, default='median (IQR)'
+        Summary format for non-parametric continuous data. Matched loosely
+        by `helpers.get_summary()`.
     
     Returns
     -------
@@ -70,7 +74,7 @@ def compare(predictors, grouping=None, subject=None, data=None, plot=True, scale
     for predictor, sc, par in zip(predictors, scale, parametric):
         if predictor != grouping and predictor != subject:
             res = compare_one(predictor, grouping, subject, data=data, plot=plot, scale=sc, 
-                              parametric=par, **kwa)
+                              parametric=par, summary=summary, **kwa)
             results.append(res)
     plt.rcParams['figure.max_open_warning'] = orig_mow
     results = pd.DataFrame(results)
@@ -79,7 +83,7 @@ def compare(predictors, grouping=None, subject=None, data=None, plot=True, scale
     return results
 
 def compare_one(predictor, grouping=None, subject=None, data=None, plot=True, 
-                scale=None, parametric=None, **kwa):
+                scale=None, parametric=None, summary='median (IQR)', **kwa):
     """Describe and compare one grouped variable
     
     Parameters
@@ -102,6 +106,9 @@ def compare_one(predictor, grouping=None, subject=None, data=None, plot=True,
     parametric : bool, optional
         Force parametric or non-parametric tests. By default it is decided
         by the Shapiro-Wilk test of normality.
+    summary : str, default='median (IQR)'
+        Summary format for non-parametric continuous data. Matched loosely
+        by `helpers.get_summary()`.
     
     Returns
     -------
@@ -129,14 +136,17 @@ def compare_one(predictor, grouping=None, subject=None, data=None, plot=True,
             res = _independent_proportion(predictor, grouping, scale, plot=plot, **kwa)
     elif scale == 'categorical' or scale == 'continuous':
         if subject is not None:
-            res = _paired_difference(predictor, grouping, subject, scale, plot=plot, parametric=parametric, **kwa)
+            res = _paired_difference(predictor, grouping, subject, scale, plot=plot,
+                                     parametric=parametric, summary=summary, **kwa)
         else:
-            res = _independent_difference(predictor, grouping, scale, plot=plot, parametric=parametric, **kwa)
+            res = _independent_difference(predictor, grouping, scale, plot=plot,
+                                          parametric=parametric, summary=summary, **kwa)
     else:
         raise Exception(f'Unknown scale: {scale}')
     return res
 
-def _independent_difference(predictor, grouping, scale, plot=True, parametric=None, **kwa):
+def _independent_difference(predictor, grouping, scale, plot=True, parametric=None,
+                            summary='median (IQR)', **kwa):
     res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name, 'test': None, 'p': np.nan}
     var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(predictor, grouping)
     n_groups = len(gg)
@@ -221,8 +231,7 @@ def _independent_difference(predictor, grouping, scale, plot=True, parametric=No
         if parametric:
             res[g_name] = format_float(np.mean(g)) + ' ±' + format_float(np.std(g, ddof=1))
         else:
-            p25, p50, p75 = np.percentile(g, [25, 50, 75], interpolation='midpoint')
-            res[g_name] = f'{format_float(p50)} ({format_float(p25)}, {format_float(p75)})'
+            res[g_name] = get_summary(g, summary)
 
     if plot:
         table_0 = [
@@ -259,18 +268,8 @@ def _independent_difference(predictor, grouping, scale, plot=True, parametric=No
         plt.show()
     return res
 
-
-
-
-
-
-
-
-
-
-
-
-def _paired_difference(predictor, grouping, subject, scale, plot=True, parametric=None, **kwa):
+def _paired_difference(predictor, grouping, subject, scale, plot=True, parametric=None,
+                       summary='median (IQR)', **kwa):
     res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name, 'test': None, 'p': np.nan}
     wide, nona = _pivot_paired(predictor, grouping, subject)
         
@@ -326,8 +325,7 @@ def _paired_difference(predictor, grouping, subject, scale, plot=True, parametri
         if parametric:
             res[str(s.name)] = format_float(np.mean(s)) + ' ±' + format_float(np.std(s, ddof=1))
         else:
-            p25, p50, p75 = np.percentile(s, [25, 50, 75], interpolation='midpoint')
-            res[str(s.name)] = f'{format_float(p50)} ({format_float(p25)}, {format_float(p75)})'
+            res[str(s.name)] = get_summary(s, summary)
 
     if plot:
         table = [
@@ -379,7 +377,7 @@ def _independent_proportion(predictor, grouping, scale, plot=True, **kwa):
     
     tests = [['test', 'p-value']]
     tests_style = [['bold center'] * 2]
-    counts = pd.crosstab(var_nona, grp_nona)
+    counts = pd.crosstab(var_nona.values, grp_nona.values)
     chi2_valid = '' if counts.values.min() >= 5 else 'fc_pink'
 
     if counts.shape[0] > 1:

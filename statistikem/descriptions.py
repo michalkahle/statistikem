@@ -13,7 +13,7 @@ from statistikem import helpers
 from statistikem import comparisons
 from statistikem.comparisons import ALPHA
 
-def describe(data, parametric=None, scales=None, plot=True, summary='iqr'):
+def describe(data, parametric=None, scales=None, plot=True, summary='5 numbers'):
     """Generates descriptive statistics for variables in a dataset.
 
     This function analyzes each column of a pandas DataFrame or Series,
@@ -31,8 +31,8 @@ def describe(data, parametric=None, scales=None, plot=True, summary='iqr'):
             per variable. Defaults to None (auto-detects scale).
         plot (bool, optional): If True, creates a plot for each variable.
             Defaults to True.
-        summary (str, optional): For non-normal data, 'iqr' provides median (IQR),
-            while any other string provides the 5-number summary. Defaults to 'iqr'.
+        summary (str, optional): For non-normal data the options are '5 numbers', 
+            'median (IQR)' or 'median (range)'. Defaults to '5 numbers'.
 
     Returns:
         pd.DataFrame: A DataFrame with summary statistics for each variable,
@@ -80,16 +80,10 @@ def describe(data, parametric=None, scales=None, plot=True, summary='iqr'):
                 warnings.warn(f'Variable "{col}" might have lognormal distribution.')
             if plot:
                 comparisons._plot_histograms(nona, [nona], [possibly_normal], [possibly_lognormal], [ax[n]])
-            if possibly_normal or prmt:
+            if prmt or (possibly_normal and prmt is None):
                 res['description'] = helpers.format_float(np.mean(s)) + ' ± ' + helpers.format_float(np.std(s, ddof=1))
             else:
-                sum5n = np.percentile(nona, [0, 25, 50, 75, 100], method='midpoint')
-                if summary == 'iqr':
-                    res['description'] = f'{helpers.format_float(sum5n[2])} ({helpers.format_float(sum5n[1])}, {helpers.format_float(sum5n[3])})'
-                else:
-                    res['description'] = [helpers.format_float(quantile) for quantile in sum5n]
-                
-
+                res['description'] = helpers.get_summary(nona, summary)
         if plot:
             ax[n].set_title(col)
         results.append(res)

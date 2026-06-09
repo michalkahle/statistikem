@@ -131,6 +131,17 @@ def format_float(x, precision=2):
     else:
         return f'{x:#.{precision}g}'
 
+def get_summary(nona, summary):
+    sum5n = np.percentile(nona, [0, 25, 50, 75, 100], method='midpoint')
+    summary_lower = str(summary).lower()
+    if 'iqr' in summary_lower:
+        return f'{format_float(sum5n[2])} ({format_float(sum5n[1])}, {format_float(sum5n[3])})'
+    if 'range' in summary_lower:
+        return f'{format_float(sum5n[2])} ({format_float(sum5n[0])}, {format_float(sum5n[4])})'
+    if '5' in summary_lower:
+        return [format_float(quantile) for quantile in sum5n]
+    raise ValueError(f"'{summary}' is not supported as summary format. Choose from '5 numbers', 'median (IQR)' or 'median (range)'.")
+
 def stars(p):
     if hasattr(p, '__iter__') and type(p) != str:
         return [stars(p_i) for p_i in p]
@@ -313,17 +324,4 @@ def _get_creds(server, url, user):
     return (driver, url, [user, password])
 
 def table_for_mail(df):
-    return HTML(df.reset_index().to_html(index=False))
-
-
-
-
-
-
-
-
-
-
-
-
-
+    return HTML(df.reset_index(drop=True).to_html(index=False))
