@@ -170,6 +170,54 @@ class TestCompareBatch:
         assert (out["p_corr"] >= out["p"]).all()
 
 
+class TestCompareOnePlottingSmoke:
+    """plot=True is the interactive default; smoke-test that each branch renders without error."""
+
+    def test_independent_continuous_plots(self, normal_two_group):
+        res = comparisons.compare_one(
+            "x", "g", data=normal_two_group, plot=True
+        )
+        assert res["test"] == "t"
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+    def test_independent_binary_plots(self, binary_two_group):
+        res = comparisons.compare_one(
+            "y", "g", data=binary_two_group, plot=True
+        )
+        assert res["scale"] == "binary"
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+    def test_paired_continuous_plots(self, paired_continuous):
+        res = comparisons.compare_one(
+            "value", "time", subject="subject",
+            data=paired_continuous, plot=True,
+        )
+        assert res["test"] in ("paired t", "signed-rank")
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+    def test_paired_binary_plots(self, paired_binary):
+        res = comparisons.compare_one(
+            "y", "time", subject="subject",
+            data=paired_binary, plot=True,
+        )
+        assert res["scale"] == "binary"
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+    def test_independent_categorical_plots(self, rng):
+        n = 60
+        df = pd.DataFrame({
+            "grade": rng.integers(1, 4, n),
+            "g": ["a"] * (n // 2) + ["b"] * (n // 2),
+        })
+        comparisons.compare_one("grade", "g", data=df, plot=True, scale="categorical")
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+
 class TestPivotPairedDoesNotMutateInput:
     def test_input_index_preserved(self, paired_continuous):
         value = paired_continuous["value"]

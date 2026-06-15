@@ -132,12 +132,12 @@ def compare_one(predictor, grouping=None, subject=None, data=None, plot=True,
         scale = guess_scale(predictor)
 
 
-    if scale == 'binary':
+    if scale == 'binary' or scale == 'categorical':
         if subject is not None:
             res = _paired_proportion(predictor, grouping, subject, scale, plot=plot, **kwa)
         else:
             res = _independent_proportion(predictor, grouping, scale, plot=plot, **kwa)
-    elif scale == 'categorical' or scale == 'continuous' or scale == 'datetime':
+    elif scale == 'continuous' or scale == 'datetime':
         if subject is not None:
             res = _paired_difference(predictor, grouping, subject, scale, plot=plot,
                                      parametric=parametric, summary=summary, **kwa)
@@ -270,17 +270,10 @@ def _independent_difference(predictor, grouping, scale, plot=True, parametric=No
             counts = var_nona.groupby([var_nona,grp_nona]).count().unstack()
             _plot_bars(counts.T, ax[1][0])
         else:
-            raise Exception(f'unknown scale: {scale}')
-        
-        for x in range(len(g_names)):
-            sm.qqplot(gg[x], ax=ax[2], markerfacecolor='none', markeredgecolor=f'C{x}', line='s')
-        ax[2].set_title('Q-Q normal~sample')
-        ax[2].get_xaxis().label.set_visible(False)
-        ax[2].get_yaxis().label.set_visible(False)
-        
-        table = plot_table(tests, style=tests_style, ax=ax[3])
-        table.auto_set_font_size(False)
-        table.set_fontsize(FONTSIZE)
+            raise ValueError(f'unknown scale: {scale}')
+
+        _plot_qq(gg, ax[2])
+        _render_tests_table(tests, tests_style, ax[3])
         plt.show()
     return res
 
@@ -367,21 +360,11 @@ def _paired_difference(predictor, grouping, subject, scale, plot=True, parametri
                       .count().unstack(nona.columns.name).fillna(0))
             _plot_bars(counts.T, ax[1][0])
         else:
-            raise Exception(f'unknown scale: {scale}')
-        
-        for x, s in enumerate(nona_list):
-            sm.qqplot(s, ax=ax[2], markerfacecolor='none', markeredgecolor=f'C{x}', line='s')
-        ax[2].set_title('Q-Q normal~sample')
-        ax[2].get_xaxis().label.set_visible(False)
-        ax[2].get_yaxis().label.set_visible(False)
-        
-        table = plot_table(tests, style=tests_style, ax=ax[3])
-        table.auto_set_font_size(False)
-        table.set_fontsize(FONTSIZE)
+            raise ValueError(f'unknown scale: {scale}')
+
+        _plot_qq(nona_list, ax[2])
+        _render_tests_table(tests, tests_style, ax[3])
         plt.show()
-        
-#         plt.subplots_adjust(hspace=0.05, wspace=0.05)
-#         fig.tight_layout()
     return res
 
 
@@ -426,45 +409,15 @@ def _independent_proportion(predictor, grouping, scale, plot=True, **kwa):
             tests.append([test, p])
             tests_style.append(['', 'fc_pink' if p < ALPHA else ''])
     else:
-        # There is just single value. Let's add complementary binary value.
-        val = counts.iloc[0].name
-        complementary = {'0':1, '1':0, 'True':False, 'False':True}.get(str(val))
-        if complementary is not None:
-            tcounts = counts.T
-            tcounts[complementary] = 0
-            counts = tcounts.T.sort_index()
+        counts = _ensure_two_rows(counts)
     for g_name, count in counts.items():
         res[str(g_name)] = f'{count.iloc[-1]}/{count.sum()} ({count.iloc[-1] / count.sum() * 100:2.0f}%)'
     if plot:
-        table_0 = [[''] + list(g_names) + ['total']]
-        style_0 = [[None] + [f'fc_C{x}' for x in range(counts.shape[1])] + ['normal']]
-        sums = counts.sum()
-        total = sums.sum()
-        warn = lambda x: 'fc_pink' if x < 5 else ''
-        for val, row in counts.iterrows():
-            table_0.append([val] + [_perc(x, col_total) for x, col_total in zip(row, sums)] + [_perc(row.sum(), total)])
-            style_0.append([''] + ['right ' + warn(x) for x in row] + ['right'])
-        table_0.append(['total'] + [_perc(x, total) for x in sums] + [_perc(total, total)])
-        style_0.append([''] + ['right' for x in sums] + ['right'])
-        table_0.append(['missing'] + [x for x in g_missing] + [sum(g_missing)])
-        style_0.append([''] + ['right' for x in g_missing] + ['right'])
+        table_0, style_0 = _proportion_table(counts, g_names, missing=g_missing)
         fig, ax = _make_fig(res, table_0, style_0)
-
         _plot_bars(counts.T, ax[1][0])
-
-        ax[2].set_title('Observed vs Expected')
-        sums = counts.sum(axis=1)
-        if sums.shape[0] > 1:
-            ax[2].plot([0, sums.iloc[0]], [0, sums.iloc[1]], color='black')
-            for ii, col in counts.T.iterrows():
-                ax[2].plot(col.iloc[0], col.iloc[1], 'o')
-            ax[2].set_aspect('equal', adjustable='box')
-            ax[2].set_xlabel(sums.index[0])
-            ax[2].set_ylabel(sums.index[1])
-
-        table = plot_table(tests, style=tests_style, ax=ax[3])
-        table.auto_set_font_size(False)
-        table.set_fontsize(FONTSIZE)
+        _plot_observed_expected(counts, ax[2])
+        _render_tests_table(tests, tests_style, ax[3])
         plt.show()
     return res
 
@@ -479,63 +432,85 @@ def _paired_proportion(predictor, grouping, subject, scale, plot=True, **kwa):
     tests_style = [['bold center'] * 2]
     
     if counts.shape[0] == 1:
-        # There is just single value. Let's add complementary binary value.
-        val = counts.iloc[0].name
-        complementary = {'0':1, '1':0, 'True':False, 'False':True}.get(str(val))
-        if complementary is not None:
-            tcounts = counts.T
-            tcounts[complementary] = 0
-            counts = tcounts.T.sort_index()
-    elif counts.shape == (2,2):
+        counts = _ensure_two_rows(counts)
+    elif counts.shape == (2, 2):
         test = 'McNemar'
         mcnemar = sm.stats.mcnemar(counts, exact=False, correction=True)
         tests.append([test, mcnemar.pvalue])
         mcnemar_valid = '' if (counts.iloc[0, 1] + counts.iloc[1, 0]) >= 10 else 'fc_pink'
         tests_style.append([mcnemar_valid, 'fc_pink' if mcnemar.pvalue < ALPHA else ''])
-    else:
-        pass
-
-    # return tests
-
-
 
     for g_name, count in counts.items():
         res[str(g_name)] = f'{count.iloc[-1]} ({count.iloc[-1] / count.sum() * 100:2.0f}%)'
     if plot:
-        table_0 = [[''] + list(counts.columns) + ['total']]
-        style_0 = [[None] + [f'fc_C{x}' for x in range(counts.shape[1])] + ['normal']]
-        sums = counts.sum()
-        total = sums.sum()
-        warn = lambda x: 'fc_pink' if x < 5 else ''
-        for val, row in counts.iterrows():
-            table_0.append([val] + [_perc(x, col_total) for x, col_total in zip(row, sums)] + [_perc(row.sum(), total)])
-            style_0.append([''] + ['right ' + warn(x) for x in row] + ['right'])
-        table_0.append(['total'] + [_perc(x, total) for x in sums] + [_perc(total, total)])
-        style_0.append([''] + ['right' for x in sums] + ['right'])
-        # table_0.append(['missing'] + [x for x in g_missing] + [sum(g_missing)])
-        # style_0.append([''] + ['right' for x in g_missing] + ['right'])
+        table_0, style_0 = _proportion_table(counts, counts.columns)
         fig, ax = _make_fig(res, table_0, style_0)
-
         _plot_bars(counts.T, ax[1][0])
-
-        ax[2].set_title('Observed vs Expected')
-        sums = counts.sum(axis=1)
-        if sums.shape[0] > 1:
-            ax[2].plot([0, sums.iloc[0]], [0, sums.iloc[1]], color='black')
-            for ii, col in counts.T.iterrows():
-                ax[2].plot(col.iloc[0], col.iloc[1], 'o')
-            ax[2].set_aspect('equal', adjustable='box')
-            ax[2].set_xlabel(sums.index[0])
-            ax[2].set_ylabel(sums.index[1])
-
-        table = plot_table(tests, style=tests_style, ax=ax[3])
-        table.auto_set_font_size(False)
-        table.set_fontsize(FONTSIZE)
+        _plot_observed_expected(counts, ax[2])
+        _render_tests_table(tests, tests_style, ax[3])
         plt.show()
     return res
 
 def _perc(x, total):
     return f'{x} ({x / total * 100:2.0f}%)'
+
+
+def _render_tests_table(tests, tests_style, ax):
+    table = plot_table(tests, style=tests_style, ax=ax)
+    table.auto_set_font_size(False)
+    table.set_fontsize(FONTSIZE)
+
+
+def _plot_qq(groups, ax):
+    for x, g in enumerate(groups):
+        sm.qqplot(g, ax=ax, markerfacecolor='none', markeredgecolor=f'C{x}', line='s')
+    ax.set_title('Q-Q normal~sample')
+    ax.get_xaxis().label.set_visible(False)
+    ax.get_yaxis().label.set_visible(False)
+
+
+def _plot_observed_expected(counts, ax):
+    ax.set_title('Observed vs Expected')
+    sums = counts.sum(axis=1)
+    if sums.shape[0] > 1:
+        ax.plot([0, sums.iloc[0]], [0, sums.iloc[1]], color='black')
+        for _, col in counts.T.iterrows():
+            ax.plot(col.iloc[0], col.iloc[1], 'o')
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_xlabel(sums.index[0])
+        ax.set_ylabel(sums.index[1])
+
+
+def _ensure_two_rows(counts):
+    """For 1-row crosstabs of a binary variable, append the missing complementary row."""
+    if counts.shape[0] != 1:
+        return counts
+    val = counts.iloc[0].name
+    complementary = {'0': 1, '1': 0, 'True': False, 'False': True}.get(str(val))
+    if complementary is None:
+        return counts
+    tcounts = counts.T
+    tcounts[complementary] = 0
+    return tcounts.T.sort_index()
+
+
+def _proportion_table(counts, column_names, missing=None):
+    """Build the (cells, style) pair for the proportion contingency table."""
+    n_cols = counts.shape[1]
+    table = [[''] + list(column_names) + ['total']]
+    style = [[None] + [f'fc_C{x}' for x in range(n_cols)] + ['normal']]
+    sums = counts.sum()
+    total = sums.sum()
+    warn = lambda x: 'fc_pink' if x < 5 else ''
+    for val, row in counts.iterrows():
+        table.append([val] + [_perc(x, col_total) for x, col_total in zip(row, sums)] + [_perc(row.sum(), total)])
+        style.append([''] + ['right ' + warn(x) for x in row] + ['right'])
+    table.append(['total'] + [_perc(x, total) for x in sums] + [_perc(total, total)])
+    style.append([''] + ['right' for _ in sums] + ['right'])
+    if missing is not None:
+        table.append(['missing'] + list(missing) + [sum(missing)])
+        style.append([''] + ['right' for _ in missing] + ['right'])
+    return table, style
     
 
 r_stats = None
