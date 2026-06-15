@@ -380,38 +380,34 @@ def _independent_proportion(predictor, grouping, scale, plot=True, **kwa):
     chi2_valid = '' if counts.values.min() >= 5 else 'fc_pink'
 
     if counts.shape[0] > 1:
-        test = 'Pearson chi^2'
-        chi2, p, dof, exp = stats.chi2_contingency(counts, correction=False)
-#         res['test'], res['p'] = test, p
-        tests.append([r'$\chi^2$ Pearson', p])
-        tests_style.append([chi2_valid, 'fc_pink' if p < ALPHA else ''])
+        # Pearson chi^2 is the general-purpose test for any RxC table.
+        chi2, p_pearson, dof, exp = stats.chi2_contingency(counts, correction=False)
+        tests.append([r'$\chi^2$ Pearson', p_pearson])
+        tests_style.append([chi2_valid, 'fc_pink' if p_pearson < ALPHA else ''])
+        res['test'], res['p'] = 'Pearson chi^2', p_pearson
 
-        test = 'Yates chi^2'
-        chi2, p, dof, exp = stats.chi2_contingency(counts, correction=True)
-        res['test'], res['p'] = test, p
-        tests.append([r'$\chi^2$ Yates', p])
-        tests_style.append([chi2_valid, 'fc_pink' if p < ALPHA else ''])
+        if counts.shape == (2, 2):
+            # Yates' correction and Fisher's exact only apply to 2x2 tables.
+            chi2, p_yates, dof, exp = stats.chi2_contingency(counts, correction=True)
+            tests.append([r'$\chi^2$ Yates', p_yates])
+            tests_style.append([chi2_valid, 'fc_pink' if p_yates < ALPHA else ''])
 
-        if counts.shape[1] < 2:
-            pass
-        elif counts.shape == (2, 2): 
-            test = 'Fisher exact'
             oddsratio, p = stats.fisher_exact(counts, alternative='two-sided')
-            res['test'], res['p'] = test, p
-            tests.append([test, p])
+            res['test'], res['p'] = 'Fisher exact', p
+            tests.append(['Fisher exact', p])
             tests_style.append(['', 'fc_pink' if p < ALPHA else ''])
             tests.append(['odds ratio', oddsratio])
             tests_style.append([None, None])
-        elif startr():
-            test = 'Fisher exact'
+        elif counts.shape[1] >= 2 and startr():
+            # Fisher's exact for larger tables requires R via rpy2.
             p = r_stats.fisher_test(counts.values)[0][0]
-            res['test'], res['p'] = test, p
-            tests.append([test, p])
+            res['test'], res['p'] = 'Fisher exact', p
+            tests.append(['Fisher exact', p])
             tests_style.append(['', 'fc_pink' if p < ALPHA else ''])
     else:
         counts = _ensure_two_rows(counts)
     for g_name, count in counts.items():
-        res[str(g_name)] = f'{count.iloc[-1]}/{count.sum()} ({count.iloc[-1] / count.sum() * 100:2.0f}%)'
+        res[str(g_name)] = _format_counts(count, scale)
     if plot:
         table_0, style_0 = _proportion_table(counts, g_names, missing=g_missing)
         fig, ax = _make_fig(res, table_0, style_0)
@@ -437,11 +433,21 @@ def _paired_proportion(predictor, grouping, subject, scale, plot=True, **kwa):
         test = 'McNemar'
         mcnemar = sm.stats.mcnemar(counts, exact=False, correction=True)
         tests.append([test, mcnemar.pvalue])
+        res['test'], res['p'] = test, mcnemar.pvalue
         mcnemar_valid = '' if (counts.iloc[0, 1] + counts.iloc[1, 0]) >= 10 else 'fc_pink'
         tests_style.append([mcnemar_valid, 'fc_pink' if mcnemar.pvalue < ALPHA else ''])
+    elif counts.shape[0] == counts.shape[1]:
+        # Bowker's test of symmetry generalises McNemar to k>2 categories.
+        bowker = sm.stats.SquareTable(counts).symmetry()
+        tests.append(['Bowker', bowker.pvalue])
+        res['test'], res['p'] = 'Bowker', bowker.pvalue
+        tests_style.append(['', 'fc_pink' if bowker.pvalue < ALPHA else ''])
+    else:
+        warnings.warn(f'Paired categorical test for "{predictor.name}" needs '
+                      'matching category sets in both groups.')
 
     for g_name, count in counts.items():
-        res[str(g_name)] = f'{count.iloc[-1]} ({count.iloc[-1] / count.sum() * 100:2.0f}%)'
+        res[str(g_name)] = _format_counts(count, scale, denominator=False)
     if plot:
         table_0, style_0 = _proportion_table(counts, counts.columns)
         fig, ax = _make_fig(res, table_0, style_0)
@@ -453,6 +459,21 @@ def _paired_proportion(predictor, grouping, subject, scale, plot=True, **kwa):
 
 def _perc(x, total):
     return f'{x} ({x / total * 100:2.0f}%)'
+
+
+def _format_counts(count, scale, denominator=True):
+    """Summarise one group's category counts for the result dict.
+
+    Binary variables report the positive (last) category as a single line;
+    categorical variables list every category, one per line.
+    """
+    total = count.sum()
+    def cell(x):
+        pct = f'{x / total * 100:2.0f}%'
+        return f'{x}/{total} ({pct})' if denominator else f'{x} ({pct})'
+    if scale == 'binary':
+        return cell(count.iloc[-1])
+    return '\n'.join(f'{idx}: {cell(x)}' for idx, x in count.items())
 
 
 def _render_tests_table(tests, tests_style, ax):

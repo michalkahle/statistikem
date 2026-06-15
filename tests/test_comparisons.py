@@ -111,6 +111,42 @@ class TestCompareOneIndependentBinary:
         assert 0 <= res["p"] <= 1
 
 
+class TestCompareOneIndependentCategorical:
+    @pytest.fixture
+    def string_categorical(self, rng):
+        n = 90
+        return pd.DataFrame(
+            {
+                "grade": rng.choice(["mild", "moderate", "severe"], n),
+                "g": ["a"] * (n // 2) + ["b"] * (n // 2),
+            }
+        )
+
+    def test_string_categorical_uses_contingency_test(self, string_categorical):
+        res = comparisons.compare_one(
+            "grade", "g", data=string_categorical, plot=False
+        )
+        assert res["scale"] == "categorical"
+        assert res["test"] in ("Pearson chi^2", "Fisher exact")
+        assert 0 <= res["p"] <= 1
+
+    def test_per_category_cell_summaries(self, string_categorical):
+        res = comparisons.compare_one(
+            "grade", "g", data=string_categorical, plot=False
+        )
+        # every category should appear in each group's cell summary
+        for group in ("a", "b"):
+            for cat in ("mild", "moderate", "severe"):
+                assert cat in res[group]
+
+    def test_batch_categorical_has_real_p(self, string_categorical):
+        out = comparisons.compare(
+            ["grade"], "g", data=string_categorical, plot=False
+        )
+        assert out["p"].notna().all()
+        assert "p_corr" in out.columns
+
+
 class TestCompareOnePairedContinuous:
     def test_normal_paired_picks_paired_t(self, paired_continuous):
         res = comparisons.compare_one(
@@ -214,6 +250,33 @@ class TestCompareOnePlottingSmoke:
             "g": ["a"] * (n // 2) + ["b"] * (n // 2),
         })
         comparisons.compare_one("grade", "g", data=df, plot=True, scale="categorical")
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+    def test_independent_string_categorical_plots(self, rng):
+        n = 90
+        df = pd.DataFrame({
+            "grade": rng.choice(["mild", "moderate", "severe"], n),
+            "g": ["a"] * (n // 2) + ["b"] * (n // 2),
+        })
+        comparisons.compare_one("grade", "g", data=df, plot=True)
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+    def test_paired_categorical_plots(self, rng):
+        n = 50
+        subject = np.arange(n)
+        before = rng.choice(["mild", "moderate", "severe"], n)
+        after = rng.choice(["mild", "moderate", "severe"], n)
+        df = pd.DataFrame({
+            "grade": np.concatenate([before, after]),
+            "time": ["before"] * n + ["after"] * n,
+            "subject": np.concatenate([subject, subject]),
+        })
+        res = comparisons.compare_one(
+            "grade", "time", subject="subject", data=df, plot=True,
+        )
+        assert res["scale"] == "categorical"
         import matplotlib.pyplot as plt
         plt.close("all")
 
