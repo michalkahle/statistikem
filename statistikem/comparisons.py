@@ -35,7 +35,7 @@ def compare(predictors, grouping=None, subject=None, data=None, plot=True, scale
         A DataFrame containing all analyzed predictors and grouping variable.
     plot : bool, default=True
         Plot a graphical summary.
-    scale : {'binary', 'categorical', 'continuous'}, optional
+    scale : {'binary', 'categorical', 'numeric'}, optional
         Scale of the variable (for plots). If not given it is guessed from data.
     parametric : bool, optional
         Force parametric or non-parametric tests. By default it is decided
@@ -45,7 +45,7 @@ def compare(predictors, grouping=None, subject=None, data=None, plot=True, scale
         include: 'bonferroni', 'sidak', 'holm-sidak', 'holm' and other. Please
         see documentation to `statsmodels.stats.multitest.multipletests`.
     summary : str, default='median (IQR)'
-        Summary format for non-parametric continuous data. Matched loosely
+        Summary format for non-parametric numeric data. Matched loosely
         by `helpers.get_summary()`.
     
     Returns
@@ -104,13 +104,13 @@ def compare_one(predictor, grouping=None, subject=None, data=None, plot=True,
         containing these columns must be given.
     plot : bool, default=True
         Plot graphical summary.
-    scale : {'binary', 'categorical', 'continuous'}, optional
+    scale : {'binary', 'categorical', 'numeric'}, optional
         Scale of the variable (for plots). If not given it is guessed from data.
     parametric : bool, optional
         Force parametric or non-parametric tests. By default it is decided
         by the Shapiro-Wilk test of normality.
     summary : str, default='median (IQR)'
-        Summary format for non-parametric continuous data. Matched loosely
+        Summary format for non-parametric numeric data. Matched loosely
         by `helpers.get_summary()`.
     
     Returns
@@ -137,7 +137,7 @@ def compare_one(predictor, grouping=None, subject=None, data=None, plot=True,
             res = _paired_proportion(predictor, grouping, subject, scale, plot=plot, **kwa)
         else:
             res = _independent_proportion(predictor, grouping, scale, plot=plot, **kwa)
-    elif scale == 'continuous' or scale == 'datetime':
+    elif scale == 'numeric' or scale == 'datetime':
         if subject is not None:
             res = _paired_difference(predictor, grouping, subject, scale, plot=plot,
                                      parametric=parametric, summary=summary, **kwa)
@@ -261,10 +261,10 @@ def _independent_difference(predictor, grouping, scale, plot=True, parametric=No
         style_0 = [[None] * len(table_0[0])] * len(table_0)
         style_0[0] = [None] + [f'fc_C{x}' for x in range(n_groups)] + [None]
         style_0[4] = [None] + ['fc_lightgreen' if x else '' for x in possibly_normal] + [None]
-        hist_rows = n_groups if scale in ('continuous', 'datetime') else 1
+        hist_rows = n_groups if scale in ('numeric', 'datetime') else 1
         fig, ax = _make_fig(res, table_0, style_0, rows=hist_rows)
 
-        if scale in ('continuous', 'datetime'):
+        if scale in ('numeric', 'datetime'):
             _plot_histograms(var_nona.values.flatten(), gg, possibly_normal, possibly_lognormal, ax[1], scale=scale)
         elif scale == 'categorical':
             counts = var_nona.groupby([var_nona,grp_nona]).count().unstack()
@@ -349,10 +349,10 @@ def _paired_difference(predictor, grouping, subject, scale, plot=True, parametri
         style[0] = [None] + [f'fc_C{x}' for x in range(nona.shape[1])]
         style[4] = [None] + ['fc_lightgreen' if x else '' for x in possibly_normal]
         
-        hist_rows = nona.shape[1] if scale == 'continuous' else 1
+        hist_rows = nona.shape[1] if scale == 'numeric' else 1
         fig, ax = _make_fig(res, table, style, rows=hist_rows)
         
-        if scale == 'continuous':
+        if scale == 'numeric':
             _plot_histograms(nona.values.flatten(), nona_list,
                              possibly_normal, possibly_lognormal, ax[1])
         elif scale == 'categorical':
@@ -616,7 +616,8 @@ def _split_to_groups(var, grouping):
     var_nona = var[~ na_loc]
     grp_nona = grouping[~ na_loc]
     if isinstance(grp_nona, pd.Series) and grp_nona.dtype.name == 'category':
-        g_names = grp_nona.cat.categories
+        present = set(grp_nona.unique())
+        g_names = [name for name in grp_nona.cat.categories if name in present]
         gg = [var_nona[grp_nona == name] for name in g_names]
         g_missing = [na_loc[grouping == name].sum() for name in g_names]
     else:

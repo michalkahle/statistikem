@@ -33,7 +33,7 @@ The package lives entirely in `statistikem/`. Each module is independently impor
 
 ### Central design pattern: automatic scale detection
 
-`helpers.guess_scale(series)` classifies every variable as `"binary"`, `"categorical"`, or `"continuous"`. All comparison and description functions call this to pick the right statistical test and plot type automatically, so callers rarely need to specify a scale manually.
+`helpers.guess_scale(series)` classifies every variable as `"binary"`, `"categorical"`, or `"numeric"`. All comparison and description functions call this to pick the right statistical test and plot type automatically, so callers rarely need to specify a scale manually.
 
 ### Statistical test selection in `comparisons.py`
 

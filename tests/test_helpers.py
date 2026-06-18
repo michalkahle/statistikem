@@ -108,10 +108,10 @@ class TestGuessScale:
         s = pd.Series(list("abcde") * 20)
         assert helpers.guess_scale(s) == "categorical"
 
-    def test_continuous_high_cardinality(self):
+    def test_numeric_high_cardinality(self):
         rng = np.random.default_rng(0)
         s = pd.Series(rng.normal(size=200))
-        assert helpers.guess_scale(s) == "continuous"
+        assert helpers.guess_scale(s) == "numeric"
 
     def test_datetime_high_cardinality(self):
         s = pd.Series(pd.date_range("2024-01-01", periods=200, freq="D"))
@@ -124,10 +124,6 @@ class TestGuessScale:
     def test_bool_dtype_is_binary(self):
         s = pd.Series([True, False, True, True] * 25, dtype=bool)
         assert helpers.guess_scale(s) == "binary"
-
-    def test_numeric_low_cardinality_is_categorical(self):
-        s = pd.Series([1, 2, 3, 4] * 50)
-        assert helpers.guess_scale(s) == "categorical"
 
     def test_pandas_categorical_dtype(self):
         s = pd.Series(pd.Categorical(["a", "b", "c", "d", "e"] * 20))

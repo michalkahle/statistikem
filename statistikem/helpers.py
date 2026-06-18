@@ -12,13 +12,14 @@ def guess_scale(var):
     if pd.api.types.is_bool_dtype(var):
         return 'binary'
     unq = pd.unique(var)
-    n_unq = int(np.sum(~ pd.isna(unq)))
-    if n_unq <= 2:
+    cardinality = int(np.sum(~ pd.isna(unq)))
+    if cardinality <= 2:
         return 'binary'
-    if pd.api.types.is_numeric_dtype(var):
-        return 'categorical' if n_unq <= np.sqrt(var.size) else 'continuous'
     if isinstance(var.dtype, pd.CategoricalDtype) or var.dtype == object:
         return 'categorical'
+    
+    if pd.api.types.is_numeric_dtype(var):
+        return 'numeric'
     raise ValueError(f'Variable `{var.name}` type not recognized.')
 
 def fix_column_names(df):

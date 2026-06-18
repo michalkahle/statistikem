@@ -49,7 +49,7 @@ def binary_two_group(rng):
 
 
 @pytest.fixture
-def paired_continuous(rng):
+def paired_numeric(rng):
     n = 40
     subject = np.arange(n)
     before = rng.normal(0, 1, n)
@@ -79,13 +79,13 @@ def paired_binary(rng):
     )
 
 
-class TestCompareOneIndependentContinuous:
+class TestCompareOneIndependentnumeric:
     def test_normal_picks_t(self, normal_two_group):
         res = comparisons.compare_one(
             "x", "g", data=normal_two_group, plot=False
         )
         assert res["test"] == "t"
-        assert res["scale"] == "continuous"
+        assert res["scale"] == "numeric"
         assert "a" in res and "b" in res
 
     def test_force_nonparametric(self, normal_two_group):
@@ -147,19 +147,19 @@ class TestCompareOneIndependentCategorical:
         assert "p_corr" in out.columns
 
 
-class TestCompareOnePairedContinuous:
-    def test_normal_paired_picks_paired_t(self, paired_continuous):
+class TestCompareOnePairednumeric:
+    def test_normal_paired_picks_paired_t(self, paired_numeric):
         res = comparisons.compare_one(
             "value", "time", subject="subject",
-            data=paired_continuous, plot=False,
+            data=paired_numeric, plot=False,
         )
         assert res["test"] == "paired t"
         assert 0 <= res["p"] <= 1
 
-    def test_force_nonparametric(self, paired_continuous):
+    def test_force_nonparametric(self, paired_numeric):
         res = comparisons.compare_one(
             "value", "time", subject="subject",
-            data=paired_continuous, plot=False, parametric=False,
+            data=paired_numeric, plot=False, parametric=False,
         )
         assert res["test"] == "signed-rank"
 
@@ -187,12 +187,12 @@ class TestCompareBatch:
         finally:
             plt.rcParams["figure.max_open_warning"] = original
 
-    def test_skips_grouping_and_subject_columns(self, paired_continuous):
+    def test_skips_grouping_and_subject_columns(self, paired_numeric):
         out = comparisons.compare(
-            list(paired_continuous.columns),
+            list(paired_numeric.columns),
             grouping="time",
             subject="subject",
-            data=paired_continuous,
+            data=paired_numeric,
             plot=False,
         )
         assert "time" not in out["predictor"].values
@@ -209,7 +209,7 @@ class TestCompareBatch:
 class TestCompareOnePlottingSmoke:
     """plot=True is the interactive default; smoke-test that each branch renders without error."""
 
-    def test_independent_continuous_plots(self, normal_two_group):
+    def test_independent_numeric_plots(self, normal_two_group):
         res = comparisons.compare_one(
             "x", "g", data=normal_two_group, plot=True
         )
@@ -225,10 +225,10 @@ class TestCompareOnePlottingSmoke:
         import matplotlib.pyplot as plt
         plt.close("all")
 
-    def test_paired_continuous_plots(self, paired_continuous):
+    def test_paired_numeric_plots(self, paired_numeric):
         res = comparisons.compare_one(
             "value", "time", subject="subject",
-            data=paired_continuous, plot=True,
+            data=paired_numeric, plot=True,
         )
         assert res["test"] in ("paired t", "signed-rank")
         import matplotlib.pyplot as plt
@@ -282,10 +282,10 @@ class TestCompareOnePlottingSmoke:
 
 
 class TestPivotPairedDoesNotMutateInput:
-    def test_input_index_preserved(self, paired_continuous):
-        value = paired_continuous["value"]
-        time = paired_continuous["time"]
-        subject = paired_continuous["subject"]
+    def test_input_index_preserved(self, paired_numeric):
+        value = paired_numeric["value"]
+        time = paired_numeric["time"]
+        subject = paired_numeric["subject"]
         original_index = value.index.copy()
         comparisons._pivot_paired(value, time, subject)
         pd.testing.assert_index_equal(value.index, original_index)

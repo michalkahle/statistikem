@@ -16,17 +16,17 @@ def describe(data, parametric=None, scales=None, plot=True, summary='5 numbers')
     """Generates descriptive statistics for variables in a dataset.
 
     This function analyzes each column of a pandas DataFrame or Series,
-    determines its scale (binary, categorical, or continuous), and computes
+    determines its scale (binary, categorical, or numeric), and computes
     appropriate summary statistics. It can also generate plots to visualize
     the distribution of each variable.
 
     Args:
         data (pd.DataFrame or pd.Series): Input data to analyze.
         parametric (bool or iterable, optional): Force parametric summary (mean ± std)
-            for continuous variables. If an iterable, it's applied per variable.
+            for numeric variables. If an iterable, it's applied per variable.
             Defaults to None, which relies on a normality test.
         scales (str or list, optional): Specify the scale for each variable
-            ('binary', 'categorical', 'continuous'). If a list, it's applied
+            ('binary', 'categorical', 'numeric'). If a list, it's applied
             per variable. Defaults to None (auto-detects scale).
         plot (bool, optional): If True, creates a plot for each variable.
             Defaults to True.
@@ -71,7 +71,7 @@ def describe(data, parametric=None, scales=None, plot=True, summary='5 numbers')
             total = count.sum()
             res_list = ([f'{label}: {value}/{total} ({value / count.sum() * 100:.0f}%)' for label, value in count.items()])
             res['description'] = ', '.join(res_list)
-        elif scale == 'continuous':
+        elif scale == 'numeric':
             p, lp = comparisons.test_for_normality(nona)
             possibly_normal = p > ALPHA
             possibly_lognormal = lp > ALPHA
