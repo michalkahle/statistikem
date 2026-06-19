@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 _SESSION_CACHE = {}
 
 
-def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None, **kwargs):
+def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None, cache=None, **kwargs):
     """Run a SQL query over JDBC and return the result as a DataFrame.
 
     Credentials are resolved from the environment variable named after `server`
@@ -30,52 +30,27 @@ def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None
         Forwarded to `pandas.read_sql_query` to coerce columns to datetimes.
     url, user : str, optional
         Override the connection URL or username from the environment.
+    cache : str, optional
+        Path to a CSV cache file. When given, the query is executed once and
+        the result written to this path; subsequent calls load the CSV
+        directly, bypassing the database. Delete the file to force a refresh.
+        `parse_dates` is applied on both paths so dtypes survive the round-trip
+        through CSV.
     **kwargs
-        Forwarded to `pandas.read_sql_query`.
+        Forwarded to `pandas.read_sql_query` (on a cache miss only).
 
     Returns
     -------
     pandas.DataFrame
     """
+    if cache is not None and os.path.exists(cache):
+        return pd.read_csv(cache, parse_dates=parse_dates)
     with jaydebeapi.connect(*_get_creds(server, url, user)) as connection:
         with warnings.catch_warnings(action='ignore'):
-            return pd.read_sql_query(sql, connection, parse_dates=parse_dates, **kwargs)
-
-
-def read_sql_cached(sql, filename, server='jdbc_analytics', parse_dates=None, **kwargs):
-    """Run `read_sql` once and cache the result as a CSV on disk.
-
-    On the first call the query is executed and the result is written to
-    `filename`; on subsequent calls the CSV is loaded directly, bypassing the
-    database. Delete the file to force a refresh. `parse_dates` is applied on
-    both paths so dtypes survive the round-trip through CSV.
-
-    Parameters
-    ----------
-    sql : str
-        SQL query to execute when the cache file is absent.
-    filename : str
-        Path to the CSV cache file.
-    server : str
-        Name of the environment variable holding the connection string.
-        Default `'jdbc_analytics'`.
-    parse_dates : list or dict, optional
-        Columns to parse as datetimes, forwarded to `read_sql` on a cache miss
-        and to `pandas.read_csv` on a cache hit.
-    **kwargs
-        Forwarded to `read_sql` on a cache miss only.
-
-    Returns
-    -------
-    pandas.DataFrame
-    """
-    if not os.path.exists(filename):
-        df = read_sql(sql, server, parse_dates=parse_dates, **kwargs)
-        df.to_csv(filename, index=False)
-    else:
-        df = pd.read_csv(filename, parse_dates=parse_dates)
+            df = pd.read_sql_query(sql, connection, parse_dates=parse_dates, **kwargs)
+    if cache is not None:
+        df.to_csv(cache, index=False)
     return df
-
 
 
 def execute_sql(sql, server=None, parse_dates=None, url=None, user=None):
