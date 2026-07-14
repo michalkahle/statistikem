@@ -14,8 +14,17 @@ Installed in editable mode (`pip install -e .`). After editing source files, cal
 # Install in editable mode
 pip install -e .
 
-# No test suite exists — functionality is validated interactively via statistikem.ipynb
+# Run the test suite (pytest)
+pytest
+
+# Run a single test file / test
+pytest tests/test_comparisons.py
+pytest tests/test_helpers.py::test_guess_scale
 ```
+
+`tests/conftest.py` forces the non-interactive `Agg` matplotlib backend, so tests
+that build plots run headless. The tests live in `tests/`; broader exploratory
+validation happens interactively in `statistikem.ipynb`.
 
 ## Architecture
 
@@ -29,7 +38,8 @@ The package lives entirely in `statistikem/`. Each module is independently impor
 | `descriptions.py` | `describe()` | Descriptive statistics for a DataFrame or Series |
 | `correlations.py` | `correlate()`, `plot_correlation()` | Correlation matrices and scatter plots |
 | `survival.py` | `survplot()`, `survplots()`, `cox()`, `univariate_cox()` | Kaplan-Meier, Aalen-Johansen, Cox regression |
-| `helpers.py` | `guess_scale()`, `format_p()`, `read_sql()`, etc. | Shared utilities used by all other modules |
+| `helpers.py` | `guess_scale()`, `format_p()`, `stars()`, etc. | Shared utilities used by all other modules |
+| `sql.py` | `read_sql()`, `execute_sql()` | JDBC database access |
 
 ### Central design pattern: automatic scale detection
 
@@ -52,4 +62,11 @@ The package lives entirely in `statistikem/`. Each module is independently impor
 
 ### Database access
 
-`helpers.read_sql()` and `helpers.execute_sql()` connect via `jaydebeapi`. Credentials/connection strings are passed at call time — nothing is stored in the package.
+`sql.read_sql()` and `sql.execute_sql()` connect via `jaydebeapi`. Credentials are
+resolved at call time from an environment variable named after the `server` argument
+(uppercased), holding space-separated `url user [password]`; a `.env` file in the
+working directory is auto-loaded, the JDBC driver path comes from `JDBC_DRIVER`, and
+any missing password is prompted for and cached in memory (`_SESSION_CACHE`) for the
+session. Nothing is stored in the package. `read_sql(..., cache='path.csv')` writes
+the result to a CSV on first call and reads from it thereafter — delete the file to
+refresh.
