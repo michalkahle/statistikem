@@ -12,5 +12,9 @@ dependencies = [
     "jaydebeapi",
     "scikit-learn>=0.24",
     "scipy>=1.4",
+    "python-dotenv",
 ]
+
+[tool.setuptools.package-data]
+statistikem = ["jars/*.jar"]
 
