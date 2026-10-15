@@ -57,22 +57,27 @@ def univariate_cox(predictors, data, duration_col, event_col, cluster_col=None, 
 
 
 def survplot(durations, 
-           event, 
-           grouping=None, 
-           data=None,
-           event_of_interest=None,
-           counts=True,
-           ylim=(0, 1), 
-           ax=None, 
-           xlabel=None,
-           direction='survival',
-           estimator='KM',
-           ploc=None,
-           show_censors=True,
-           tests=True,
-           title=None,
-           output=None,
-           **kwargs):
+    event, 
+    grouping=None, 
+    data=None,
+     
+    event_of_interest=None,
+    direction='survival',
+    estimator='KM',
+             
+    at_risk=True,
+    tests=True,
+    show_censors=True,
+    grid = True,
+    ax=None, 
+    ylim=(0, 1), 
+    title=None,
+    xlabel=None,
+    ylabel=None,
+    ploc=None,
+    output=None,
+    save_as=False,
+    **kwargs):
     '''
     Plot Kaplan-Meier curves for survival analysis.
 
@@ -82,7 +87,7 @@ def survplot(durations,
     event_of_interest (optional): value in `event` that represents the event of interest. 
     grouping (str|Series, optional): Series or column name in `data` that represents the grouping variable.
     data (DataFrame, optional): Pandas DataFrame that contains the data.
-    counts (bool, optional): If True, add at risk counts at the bottom of the plot. Defaults to True.
+    at_risk (bool, optional): If True, add at risk counts at the bottom of the plot. Defaults to True.
     ylim (tuple of float, optional): The limits for the y-axis. Defaults to (0, 1). Can be replaced with `None`.
     ax (matplotlib.axes.Axes, optional): The axes upon which to draw the plot. If None, the plot is drawn on a new set of axes.
     direction (str, optional): Type of plot to draw. 'survival' for survival function, 'density' for cumulative density function. Defaults to 'survival'.
@@ -102,9 +107,11 @@ def survplot(durations,
 
     models = []
     previous = []
-    pp = []
+    pvalues = []
     res = []
     scale = guess_scale(event)
+    kwargs['censor_styles'] = {'marker':'|', 'ms':6}
+    
     if estimator == 'KM' and scale != 'binary':
         if scale == 'categorical' and event_of_interest is not None:
             event = event == event_of_interest if type(event_of_interest) == str else event.isin(event_of_interest)
@@ -125,7 +132,8 @@ def survplot(durations,
     if ax is None:
         fig, ax = plt.subplots(dpi=75)
     if grouping is None:
-        grouping = pd.Series(len(event) * ['All'])
+        grouping = pd.Series(len(event) * [''])
+        kwargs['legend'] = False
     group_names =  grouping.cat.categories if grouping.dtype == 'category' else np.sort(grouping.dropna().unique())
     for gn, g_name in enumerate(group_names):
         group_index = (grouping == g_name).values
@@ -141,7 +149,6 @@ def survplot(durations,
 
         if estimator == 'KM':
             model = lifelines.KaplanMeierFitter()
-            kwargs['censor_styles'] = dict(marker='|', alpha=.3)
             kwargs['show_censors'] = group_show_censors
             model.fit(g_durations, g_event, label=str(g_name))
             survival_function_ = model.survival_function_
@@ -172,10 +179,10 @@ def survplot(durations,
             res.append([grouping.name, g_name, f"{q:.2f} CI95=({ci[0]:.2f}, {ci[1]:.2f})"])
 
         if direction == 'survival':
-            model.plot(ax=ax, **kwargs)
+            model.plot_survival_function(ax=ax, **kwargs)
         else:
             model.plot_cumulative_density(ax=ax, **kwargs)
-        if counts:
+        if at_risk:
             models.append(model)
         if tests:
             g_event_bin = g_event if estimator == 'KM' else g_event == event_of_interest
@@ -183,26 +190,30 @@ def survplot(durations,
                 p = lifelines.statistics.logrank_test(
                     contrast_durations, g_durations, contrast_event, g_event_bin).p_value
                 p_label = 'p=' if len(group_names) < 3 else f'{contrast_name} vs {g_name}: p='
-                pp.append(p_label + format_p(p))
+                pvalues.append(p_label + format_p(p))
                 if output == 'tests':
                     res.append([grouping.name, p_label + format_p(p)])
             previous.append((g_durations, g_event_bin, g_name))
         
     lifelines.plotting.add_at_risk_counts(*models, rows_to_show=['At risk'],  ax=ax) #, 'Censored', 'Events'
     ax.set_title(title if title is not None else grouping.name)
-    if len(pp) > 0:
-        at = matplotlib.offsetbox.AnchoredText('\n'.join(pp), loc=ploc, frameon=False)
+    if len(pvalues) > 0:
+        at = matplotlib.offsetbox.AnchoredText('\n'.join(pvalues), loc=ploc, frameon=False)
         ax.add_artist(at)
     ax.set_ylim(ylim)
     ax.set_xlim(left=0)
 
-    # y = np.linspace(0, 1, 5)
-    # ax.set_yticks(y)
-    # ax.set_yticklabels((y * 100).astype(int))
+    if grid:
+        ax.grid(alpha=.3)
+    ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1))
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
     ax.set_xlabel(xlabel if xlabel is not None else durations.name)
     # ax.legend(loc='lower left')
     [ch.set_edgecolor(None) for ch in ax.get_children() if isinstance(ch, matplotlib.collections.PolyCollection)]
     plt.tight_layout()
+    if save_as:
+        fig.savefig('gitignore/' + save_as, dpi=200)
     if output is not None:
         res = pd.DataFrame(res)
         if output in ('table', 'table_ci'):
