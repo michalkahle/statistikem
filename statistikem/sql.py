@@ -1,56 +1,58 @@
-import glob
 import os
 import warnings
-import zipfile
 from getpass import getpass
-
-import jaydebeapi
+import iris.dbapi # Requires intersystems-irispython v. 5.4.1 or higher!
 import pandas as pd
 from dotenv import load_dotenv
 
-_SESSION_CACHE = {}
-_JAR_DIR = os.path.join(os.path.dirname(__file__), 'jars')
+load_dotenv()
+_credentials = {}
 
 
-def _jar_and_driver():
-    """Return the vendored JDBC jar path and the driver class it declares."""
-    jars = glob.glob(os.path.join(_JAR_DIR, '*.jar'))
-    if not jars:
-        raise FileNotFoundError(f'No JDBC driver jar found in {_JAR_DIR}')
-    jar = jars[0]
-    with zipfile.ZipFile(jar) as z:
-        declared = z.read('META-INF/services/java.sql.Driver').decode()
-    driver = next(line.strip() for line in declared.splitlines()
-                  if line.strip() and not line.startswith('#'))
-    return jar, driver
+def _connect(server, url, user, password):
+    """Open an IRIS DB-API connection, resolving and caching credentials."""
+    cached = _credentials.get(server, (None, None, None))
+    env = os.getenv(f"ZLATOKOP_{server.upper()}", "").split() if server else []
+    env += [None] * (3 - len(env))
+    creds = (
+        url      or cached[0] or env[0] or input('url: '),
+        user     or cached[1] or env[1] or input('username: '),
+        password or cached[2] or env[2] or getpass('password: '),
+    )
+    conn = iris.dbapi.connect(connectionstr=creds[0], username=creds[1], password=creds[2])
+    _credentials[server] = creds
+    return conn
 
 
-def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None, cache=None, **kwargs):
-    """Run a SQL query and return the result as a DataFrame.
+def read_sql(sql, server='analytics', parse_dates=None,
+             url=None, user=None, password=None, cache=None, **kwargs):
+    """Run a SQL query against a Zlatokop IRIS instance and return a DataFrame.
 
-    Credentials are resolved from the environment variable named after `server`
-    (uppercased), expected to contain space-separated `url user [password]`. Any
-    missing piece is prompted for interactively. A `.env` file in the working
-    directory is loaded automatically. The JDBC driver jar ships with the
-    package, so no driver setup is required.
+    Credentials are resolved in this order: explicit arguments, credentials
+    cached earlier in this session, the ZLATOKOP_<SERVER> environment variable
+    ("url username password", whitespace-separated, may come from .env), and
+    finally an interactive prompt. Credentials are cached per server after a
+    successful connection; call _credentials.clear() to forget them.
 
     Parameters
     ----------
     sql : str
-        SQL query to execute.
-    server : str
-        Name of the environment variable holding the connection string.
-        Default `'JDBC_ANALYTICS'`.
+        Query to execute.
+    server : str or None, default 'analytics'
+        Suffix of the ZLATOKOP_<SERVER> environment variable. None skips the
+        environment lookup.
     parse_dates : list or dict, optional
-        Coerce columns to datetimes.
-    url, user : str, optional
-        Override the connection URL or username from the environment.
+        Passed to pandas.read_sql_query.
+    url : str, optional
+        Connection string, e.g. 'host:1972/NAMESPACE'.
+    user, password : str, optional
+        Login credentials.
     cache : str, optional
-        Path to a CSV cache file. When given, the query is executed once and
-        the result written to this path; subsequent calls load the CSV
-        directly, bypassing the database. Delete the file to force a refresh.
+        Path to a pickle cache file. When it exists, it is loaded instead of
+        querying the database; otherwise the result is written there. Delete
+        the file to force a refresh.
     **kwargs
-        Forwarded to `pandas.read_sql_query` (on a cache miss only).
+        Passed to pandas.read_sql_query.
 
     Returns
     -------
@@ -58,59 +60,22 @@ def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None
     """
     if cache is not None and os.path.exists(cache):
         return pd.read_pickle(cache)
-    with jaydebeapi.connect(*_get_creds(server, url, user)) as connection:
-        with warnings.catch_warnings(action='ignore'):
-            df = pd.read_sql_query(sql, connection, parse_dates=parse_dates, **kwargs)
+    with _connect(server, url, user, password) as conn, warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        df = pd.read_sql_query(sql, conn, parse_dates=parse_dates, **kwargs)
     if cache is not None:
         df.to_pickle(cache)
     return df
 
 
-def execute_sql(sql, server=None, parse_dates=None, url=None, user=None):
-    """Execute a modifying SQL statement and commit the transaction.
+def execute_sql(sql, server='analytics', url=None, user=None, password=None):
+    """Execute a modifying SQL statement (INSERT, UPDATE, CREATE, ...) and commit.
 
-    Intended for `INSERT`, `UPDATE`, `DELETE`, `CREATE`, and similar statements
-    that change state rather than return rows. Use `read_sql` for `SELECT`.
-
-    Parameters
-    ----------
-    sql : str
-        SQL statement to execute.
-    server : str
-        Name of the environment variable holding the connection string.
-    url, user : str, optional
-        Override the connection URL or username from the environment.
-
-    Returns
-    -------
-    int
-        Number of rows affected, or 0 if the driver does not report it.
+    Credentials are resolved as in `read_sql`. Returns the number of rows
+    affected, or 0 if the driver does not report it.
     """
-    with jaydebeapi.connect(*_get_creds(server, url, user)) as connection:
-        rows_affected = 0
-        with connection.cursor() as cursor:
-            cursor.execute(sql)
-            rows_affected = cursor.rowcount if cursor.rowcount is not None else 0
-        connection.commit()
-        return rows_affected
-
-
-def _get_creds(server, url, user):
-    global _SESSION_CACHE
-    load_dotenv()
-    env = os.getenv(server.upper())
-    env = [] if env is None else env.split(' ')
-    if url is None:
-        url = env[0] if len(env) > 0 else input('url:')
-    if user is None:
-        user = env[1] if len(env) > 1 else input('username:')
-    if len(env) > 2:
-        password = env[2]
-        _SESSION_CACHE = {}
-    elif _SESSION_CACHE.get((url, user)):
-        password = _SESSION_CACHE[(url, user)]
-    else:
-        password = getpass('password:')
-        _SESSION_CACHE[(url, user)] = password
-    jars, driver = _jar_and_driver()
-    return (driver, url, [user, password], jars)
+    with _connect(server, url, user, password) as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        conn.commit()
+        return max(cursor.rowcount or 0, 0)

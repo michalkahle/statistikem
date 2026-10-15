@@ -39,7 +39,7 @@ The package lives entirely in `statistikem/`. Each module is independently impor
 | `correlations.py` | `correlate()`, `plot_correlation()` | Correlation matrices and scatter plots |
 | `survival.py` | `survplot()`, `survplots()`, `cox()`, `univariate_cox()` | Kaplan-Meier, Aalen-Johansen, Cox regression |
 | `helpers.py` | `guess_scale()`, `format_p()`, `stars()`, etc. | Shared utilities used by all other modules |
-| `sql.py` | `read_sql()`, `execute_sql()` | JDBC database access |
+| `sql.py` | `read_sql()`, `execute_sql()` | IRIS DB-API database access |
 
 ### Central design pattern: automatic scale detection
 
@@ -62,11 +62,10 @@ The package lives entirely in `statistikem/`. Each module is independently impor
 
 ### Database access
 
-`sql.read_sql()` and `sql.execute_sql()` connect via `jaydebeapi`. Credentials are
-resolved at call time from an environment variable named after the `server` argument
-(uppercased), holding space-separated `url user [password]`; a `.env` file in the
-working directory is auto-loaded, the JDBC driver path comes from `JDBC_DRIVER`, and
-any missing password is prompted for and cached in memory (`_SESSION_CACHE`) for the
-session. Nothing is stored in the package. `read_sql(..., cache='path.csv')` writes
-the result to a CSV on first call and reads from it thereafter — delete the file to
+`sql.read_sql()` and `sql.execute_sql()` connect via the native IRIS DB-API driver
+(`iris.dbapi`, `intersystems-irispython>=5.4.1`). Credentials resolve in order: explicit
+`url`/`user`/`password` arguments, the per-server in-memory cache (`_credentials`), the
+`ZLATOKOP_<SERVER>` environment variable (whitespace-separated `url user password`,
+`.env` loaded at import), then an interactive prompt. `read_sql(..., cache='path.pkl')`
+pickles the result on first call and reads from it thereafter — delete the file to
 refresh.
