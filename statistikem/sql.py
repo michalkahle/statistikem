@@ -57,12 +57,12 @@ def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None
     pandas.DataFrame
     """
     if cache is not None and os.path.exists(cache):
-        return pd.read_csv(cache, parse_dates=parse_dates)
+        return pd.read_pickle(cache)
     with jaydebeapi.connect(*_get_creds(server, url, user)) as connection:
         with warnings.catch_warnings(action='ignore'):
             df = pd.read_sql_query(sql, connection, parse_dates=parse_dates, **kwargs)
     if cache is not None:
-        df.to_csv(cache, index=False)
+        df.to_pickle(cache)
     return df
 
 
