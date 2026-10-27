@@ -1,6 +1,6 @@
 from . import comparisons, helpers, correlations, descriptions, survival, sql
 from .comparisons import compare, compare_one
-from .helpers import format_p, format_value, get_summary, stars, highlight, table_for_mail
+from .helpers import format_p, format_value, get_summary, stars, highlight, table_for_mail, to_csv_new
 from .sql import read_sql, execute_sql
 from .correlations import correlate
 from .descriptions import describe

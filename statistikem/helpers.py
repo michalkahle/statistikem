@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
 import re
+from pathlib import Path
 from IPython.display import HTML
 
 def guess_scale(var):
@@ -302,3 +303,10 @@ def highlight(string, pattern):
 
 def table_for_mail(df):
     return HTML(df.reset_index(drop=True).to_html(index=False))
+
+def to_csv_new(df, path, **kwargs):
+    path = Path(path)
+    if path.exists():
+        print(f'{path} already exists')
+    else:
+        df.to_csv(path, **kwargs)
