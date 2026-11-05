@@ -46,9 +46,10 @@ def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None
     url, user : str, optional
         Override the connection URL or username from the environment.
     cache : str, optional
-        Path to a CSV cache file. When given, the query is executed once and
-        the result written to this path; subsequent calls load the CSV
-        directly, bypassing the database. Delete the file to force a refresh.
+        Path to a cache file ending in `.csv`, `.pkl` or `.pickle`. When given,
+        the query is executed once and the result written to this path;
+        subsequent calls load the file directly, bypassing the database. Delete
+        the file to force a refresh.
     **kwargs
         Forwarded to `pandas.read_sql_query` (on a cache miss only).
 
@@ -56,13 +57,17 @@ def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None
     -------
     pandas.DataFrame
     """
-    if cache is not None and os.path.exists(cache):
-        return pd.read_pickle(cache)
+    if cache is not None:
+        ext = os.path.splitext(cache)[1].lower()
+        if ext not in ('.csv', '.pkl', '.pickle'):
+            raise ValueError(f"cache must end in .csv, .pkl or .pickle, got {cache!r}")
+        if os.path.exists(cache):
+            return pd.read_csv(cache, parse_dates=parse_dates) if ext == '.csv' else pd.read_pickle(cache)
     with jaydebeapi.connect(*_get_creds(server, url, user)) as connection:
         with warnings.catch_warnings(action='ignore'):
             df = pd.read_sql_query(sql, connection, parse_dates=parse_dates, **kwargs)
     if cache is not None:
-        df.to_pickle(cache)
+        df.to_csv(cache, index=False) if ext == '.csv' else df.to_pickle(cache)
     return df
 
 
