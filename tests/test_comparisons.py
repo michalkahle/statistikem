@@ -84,7 +84,7 @@ class TestCompareOneIndependentnumeric:
         res = comparisons.compare_one(
             "x", "g", data=normal_two_group, plot=False
         )
-        assert res["test"] == "t"
+        assert res["test"] == "Welch t"
         assert res["scale"] == "numeric"
         assert "a" in res and "b" in res
 
@@ -213,7 +213,7 @@ class TestCompareOnePlottingSmoke:
         res = comparisons.compare_one(
             "x", "g", data=normal_two_group, plot=True
         )
-        assert res["test"] == "t"
+        assert res["test"] == "Welch t"
         import matplotlib.pyplot as plt
         plt.close("all")
 

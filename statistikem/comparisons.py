@@ -22,7 +22,7 @@ FONTSIZE = 10
 ALPHA = 0.05
 
 def compare(predictors, grouping=None, subject=None, data=None, plot=True, scale=None, 
-            parametric=None, multi_test_corr='holm-sidak', summary='median (IQR)', **kwa):
+            parametric=None, multi_test_corr='holm-sidak', summary='median (IQR)'):
     """Perform univariate analysis of one or more variables
     
     Parameters
@@ -39,11 +39,13 @@ def compare(predictors, grouping=None, subject=None, data=None, plot=True, scale
         Scale of the variable (for plots). If not given it is guessed from data.
     parametric : bool, optional
         Force parametric or non-parametric tests. By default it is decided
-        by the Shapiro-Wilk test of normality.
+        by the Shapiro-Wilk test of normality (of each group, or of the
+        paired differences when `subject` is given).
     multi_test_corr : str, default='holm-sidak'
         Method of multiple testing correction of the p-values. Possibilities 
         include: 'bonferroni', 'sidak', 'holm-sidak', 'holm' and other. Please
         see documentation to `statsmodels.stats.multitest.multipletests`.
+        The correction covers the predictors of this one call only.
     summary : str, default='median (IQR)'
         Summary format for non-parametric numeric data. Matched loosely
         by `helpers.get_summary()`.
@@ -76,17 +78,20 @@ def compare(predictors, grouping=None, subject=None, data=None, plot=True, scale
         for predictor, sc, par in zip(predictors, scale, parametric):
             if predictor != grouping and predictor != subject:
                 res = compare_one(predictor, grouping, subject, data=data, plot=plot, scale=sc,
-                                  parametric=par, summary=summary, **kwa)
+                                  parametric=par, summary=summary)
                 results.append(res)
     finally:
         plt.rcParams['figure.max_open_warning'] = orig_mow
     results = pd.DataFrame(results)
-    p_corr = sm.stats.multipletests(results['p'], method=multi_test_corr)[1]
-    results['p_corr'] = p_corr
+    if len(results) > 0:
+        tested = results['p'].notna()
+        results['p_corr'] = np.nan
+        if tested.any():
+            results.loc[tested, 'p_corr'] = sm.stats.multipletests(results.loc[tested, 'p'], method=multi_test_corr)[1]
     return results
 
 def compare_one(predictor, grouping=None, subject=None, data=None, plot=True, 
-                scale=None, parametric=None, summary='median (IQR)', **kwa):
+                scale=None, parametric=None, summary='median (IQR)'):
     """Describe and compare one grouped variable
     
     Parameters
@@ -130,26 +135,28 @@ def compare_one(predictor, grouping=None, subject=None, data=None, plot=True,
     subject = _get_series(subject, data)
     if not scale:
         scale = guess_scale(predictor)
-
+        if scale == 'numeric' and predictor.nunique() <= 5:
+            warnings.warn(f'"{predictor.name}" has {predictor.nunique()} distinct values and is treated as numeric. '
+                          'Pass scale= to choose.')
 
     if scale == 'binary' or scale == 'categorical':
         if subject is not None:
-            res = _paired_proportion(predictor, grouping, subject, scale, plot=plot, **kwa)
+            res = _paired_proportion(predictor, grouping, subject, scale, plot=plot)
         else:
-            res = _independent_proportion(predictor, grouping, scale, plot=plot, **kwa)
+            res = _independent_proportion(predictor, grouping, scale, plot=plot)
     elif scale == 'numeric' or scale == 'datetime':
         if subject is not None:
             res = _paired_difference(predictor, grouping, subject, scale, plot=plot,
-                                     parametric=parametric, summary=summary, **kwa)
+                                     parametric=parametric, summary=summary)
         else:
             res = _independent_difference(predictor, grouping, scale, plot=plot,
-                                          parametric=parametric, summary=summary, **kwa)
+                                          parametric=parametric, summary=summary)
     else:
         raise Exception(f'Unknown scale: {scale}')
     return res
 
 def _independent_difference(predictor, grouping, scale, plot=True, parametric=None,
-                            summary='median (IQR)', **kwa):
+                            summary='median (IQR)'):
     res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name, 'test': None, 'p': np.nan}
     var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(predictor, grouping)
     n_groups = len(gg)
@@ -206,9 +213,8 @@ def _independent_difference(predictor, grouping, scale, plot=True, parametric=No
         tests_style.append(['', 'fc_pink' if p_t < ALPHA else ''])
         res['test'], res['p'] = 't', p_t
     elif n_groups == 2:
-        # t-test for the means of two independent samples
-        s_t, p_t = stats.ttest_ind(*gg, equal_var=equal_var)
-        tests.append(['Student\'s t' if equal_var else 'Welch\'s t', p_t])
+        s_t, p_t = stats.ttest_ind(*gg, equal_var=False)
+        tests.append(['Welch\'s t', p_t])
         tests_style.append(['', 'fc_pink' if p_t < ALPHA else ''])
         
         # Mann-Whitney U test
@@ -218,7 +224,7 @@ def _independent_difference(predictor, grouping, scale, plot=True, parametric=No
         tests_style.append(['', 'fc_pink' if p_mw < ALPHA else ''])
         
         if parametric:
-            res['test'], res['p'] = 't', p_t
+            res['test'], res['p'] = 'Welch t', p_t
         else:
             res['test'], res['p'] = 'Mann-Whitney', p_mw
     else:
@@ -278,7 +284,7 @@ def _independent_difference(predictor, grouping, scale, plot=True, parametric=No
     return res
 
 def _paired_difference(predictor, grouping, subject, scale, plot=True, parametric=None,
-                       summary='median (IQR)', **kwa):
+                       summary='median (IQR)'):
     res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name, 'test': None, 'p': np.nan}
     wide, nona = _pivot_paired(predictor, grouping, subject)
         
@@ -310,25 +316,44 @@ def _paired_difference(predictor, grouping, subject, scale, plot=True, parametri
     if nona.shape[1] == 1:
         raise NotImplementedError('Just one measurement.') # this should never happen
     elif nona.shape[1] == 2:
+        diff = nona_list[1] - nona_list[0]
+        p_diff, _ = test_for_normality(diff)
+        tests.append(['Shapiro-Wilk of diff.', p_diff])
+        tests_style.append(['', 'fc_pink' if p_diff < ALPHA else ''])
+
         # t-test for the means of paired samples
         s_t, p_t = stats.ttest_rel(*nona_list)
         tests.append(['paired t', p_t])
         tests_style.append(['', 'fc_pink' if p_t < ALPHA else ''])
         
         # Wilcoxon signed-rank test
-        s_rs, p_rs = stats.wilcoxon(*nona_list, alternative='two-sided')
+        p_rs = np.nan if (diff == 0).all() else stats.wilcoxon(*nona_list, alternative='two-sided')[1]
         tests.append(['signed-rank', p_rs])
         tests_style.append(['', 'fc_pink' if p_rs < ALPHA else ''])
         if parametric is None:
-            parametric = distribution == 'normal'
+            parametric = p_diff > ALPHA
         
         if parametric:
             res['test'], res['p'] = 'paired t', p_t
         else:
             res['test'], res['p'] = 'signed-rank', p_rs
     else:
-        res['test'], res['p'] = 'ANOVA', None
-        warnings.warn(f'ANOVA not implemented, yet!')
+        long = nona.stack().rename('value').reset_index()
+        long.columns = ['subject', 'within', 'value']
+        p_a = sm.stats.AnovaRM(long, 'value', 'subject', within=['within']).fit().anova_table['Pr > F'].iloc[0]
+        tests.append(['RM ANOVA', p_a])
+        tests_style.append(['', 'fc_pink' if p_a < ALPHA else ''])
+
+        s_f, p_f = stats.friedmanchisquare(*nona_list)
+        tests.append(['Friedman', p_f])
+        tests_style.append(['', 'fc_pink' if p_f < ALPHA else ''])
+        if parametric is None:
+            parametric = distribution == 'normal'
+
+        if parametric:
+            res['test'], res['p'] = 'RM ANOVA', p_a
+        else:
+            res['test'], res['p'] = 'Friedman', p_f
         
     for s in nona_list:
         if parametric:
@@ -369,7 +394,7 @@ def _paired_difference(predictor, grouping, subject, scale, plot=True, parametri
 
 
 
-def _independent_proportion(predictor, grouping, scale, plot=True, **kwa):
+def _independent_proportion(predictor, grouping, scale, plot=True):
     res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name, 'test': None, 'p': np.nan}
     var_nona, grp_nona, g_names, gg, g_missing = _split_to_groups(predictor, grouping)
     n_groups = len(gg)
@@ -377,11 +402,11 @@ def _independent_proportion(predictor, grouping, scale, plot=True, **kwa):
     tests = [['test', 'p-value']]
     tests_style = [['bold center'] * 2]
     counts = pd.crosstab(var_nona.values, grp_nona.values)
-    chi2_valid = '' if counts.values.min() >= 5 else 'fc_pink'
 
     if counts.shape[0] > 1:
         # Pearson chi^2 is the general-purpose test for any RxC table.
         chi2, p_pearson, dof, exp = stats.chi2_contingency(counts, correction=False)
+        chi2_valid = '' if exp.min() >= 5 else 'fc_pink'
         tests.append([r'$\chi^2$ Pearson', p_pearson])
         tests_style.append([chi2_valid, 'fc_pink' if p_pearson < ALPHA else ''])
         res['test'], res['p'] = 'Pearson chi^2', p_pearson
@@ -404,6 +429,8 @@ def _independent_proportion(predictor, grouping, scale, plot=True, **kwa):
             res['test'], res['p'] = 'Fisher exact', p
             tests.append(['Fisher exact', p])
             tests_style.append(['', 'fc_pink' if p < ALPHA else ''])
+        if res['test'] == 'Pearson chi^2' and exp.min() < 5:
+            warnings.warn(f'"{predictor.name}": expected counts below 5, Pearson chi^2 may be unreliable.')
     else:
         counts = _ensure_two_rows(counts)
     for g_name, count in counts.items():
@@ -417,7 +444,7 @@ def _independent_proportion(predictor, grouping, scale, plot=True, **kwa):
         plt.show()
     return res
 
-def _paired_proportion(predictor, grouping, subject, scale, plot=True, **kwa):
+def _paired_proportion(predictor, grouping, subject, scale, plot=True):
     res = {'predictor': predictor.name, 'scale': scale, 'outcome': grouping.name,
            'test': None, 'p': np.nan}
     _, mm_nona = _pivot_paired(predictor, grouping, subject)

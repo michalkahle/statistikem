@@ -20,6 +20,7 @@ def cox(predictors, data, duration_col, event_col, cluster_col=None, check_ph=Fa
     data = data[cols].dropna()
     cph.fit(data, duration_col=duration_col, event_col=event_col, cluster_col=cluster_col)
     cph.plot(hazard_ratios=True, ax=ax)
+    ax.set_title(f'n = {len(data)}, events = {int(data[event_col].sum())}', loc='left', fontsize='medium')
     res = cph.summary.reset_index().rename({'exp(coef)':'HR', 'exp(coef) lower 95%':'HR lower 95%', 'exp(coef) upper 95%':'HR upper 95%'}, axis=1)
     res['summary'] = res.apply(
         lambda r: f'HR={r["HR"]:.3f} ({r["HR lower 95%"]:.3f}, {r["HR upper 95%"]:.3f}), p={format_p(r["p"])}', 
@@ -37,16 +38,19 @@ def univariate_cox(predictors, data, duration_col, event_col, cluster_col=None, 
     fig, ax = plt.subplots(n, 1, figsize=(6, .5 + 1.0*n), squeeze=False, sharex=kwargs.pop('sharex', None))
     
     res = []
-    for n, var in enumerate(predictors):
+    for ii, var in enumerate(predictors):
         cph = lifelines.CoxPHFitter()
         cols = [duration_col, event_col, var]
         if cluster_col is not None:
             cols += [cluster_col]
-        cph.fit(data[cols].dropna(), duration_col=duration_col, event_col=event_col, cluster_col=cluster_col)
-        cph.plot(hazard_ratios=True, ax=ax[n,0])
+        nona = data[cols].dropna()
+        cph.fit(nona, duration_col=duration_col, event_col=event_col, cluster_col=cluster_col)
+        cph.plot(hazard_ratios=True, ax=ax[ii,0])
         r = cph.summary
         res.append({
             'predictor': var,
+            'n': len(nona),
+            'events': int(nona[event_col].sum()),
             'HR': r.loc[var, 'exp(coef)'], 
             '95%CI_low': r.loc[var, "exp(coef) lower 95%"], 
             '95%CI_high': r.loc[var, "exp(coef) upper 95%"],
@@ -173,7 +177,7 @@ def survplot(durations,
                 row = [f'{x:.2f}' for x in ll]
             res.append([grouping.name, g_name] + row)
         elif output == 'median_survival':
-            quantile = kwargs.get('quantile', 0.5)
+            quantile = kwargs.pop('quantile', 0.5)
             q = lifelines.utils.qth_survival_time(quantile, survival_function_)
             ci = lifelines.utils.qth_survival_times(quantile, model.confidence_interval_).values[0]
             res.append([grouping.name, g_name, f"{q:.2f} CI95=({ci[0]:.2f}, {ci[1]:.2f})"])
@@ -213,7 +217,7 @@ def survplot(durations,
     [ch.set_edgecolor(None) for ch in ax.get_children() if isinstance(ch, matplotlib.collections.PolyCollection)]
     plt.tight_layout()
     if save_as:
-        fig.savefig('gitignore/' + save_as, dpi=200)
+        ax.get_figure().savefig('gitignore/' + save_as, dpi=200)
     if output is not None:
         res = pd.DataFrame(res)
         if output in ('table', 'table_ci'):
@@ -235,4 +239,4 @@ def survplots(duration, event, cols, data, xlabel=None, plot='survival', output=
         return pd.concat(res)
 
 def step_function_at_times(s, timeline):
-    return [s.iloc[np.searchsorted(s.index, time, side='left') - 1] for time in timeline]
+    return [s.iloc[max(np.searchsorted(s.index, time, side='right') - 1, 0)] for time in timeline]

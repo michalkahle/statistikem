@@ -49,7 +49,9 @@ def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None
         Path to a cache file ending in `.csv`, `.pkl` or `.pickle`. When given,
         the query is executed once and the result written to this path;
         subsequent calls load the file directly, bypassing the database. Delete
-        the file to force a refresh.
+        the file to force a refresh. The query text is saved next to it as
+        `<cache>.sql`; a warning is issued when the cached result comes from
+        a different query.
     **kwargs
         Forwarded to `pandas.read_sql_query` (on a cache miss only).
 
@@ -62,16 +64,22 @@ def read_sql(sql, server='jdbc_analytics', parse_dates=None, url=None, user=None
         if ext not in ('.csv', '.pkl', '.pickle'):
             raise ValueError(f"cache must end in .csv, .pkl or .pickle, got {cache!r}")
         if os.path.exists(cache):
+            if os.path.exists(cache + '.sql'):
+                with open(cache + '.sql') as f:
+                    if f.read() != sql:
+                        warnings.warn(f'{cache} was produced by a different query. Delete it to refresh.')
             return pd.read_csv(cache, parse_dates=parse_dates) if ext == '.csv' else pd.read_pickle(cache)
     with jaydebeapi.connect(*_get_creds(server, url, user)) as connection:
         with warnings.catch_warnings(action='ignore'):
             df = pd.read_sql_query(sql, connection, parse_dates=parse_dates, **kwargs)
     if cache is not None:
         df.to_csv(cache, index=False) if ext == '.csv' else df.to_pickle(cache)
+        with open(cache + '.sql', 'w') as f:
+            f.write(sql)
     return df
 
 
-def execute_sql(sql, server=None, parse_dates=None, url=None, user=None):
+def execute_sql(sql, server, parse_dates=None, url=None, user=None):
     """Execute a modifying SQL statement and commit the transaction.
 
     Intended for `INSERT`, `UPDATE`, `DELETE`, `CREATE`, and similar statements

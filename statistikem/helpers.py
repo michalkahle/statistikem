@@ -44,7 +44,7 @@ def ci_mean_normal(series, level=0.95):
     """
     mean = series.mean()
     q = (level + 1) / 2
-    hci = series.sem() * stats.t.ppf(q, len(series))
+    hci = series.sem() * stats.t.ppf(q, series.count() - 1)
     return mean, mean - hci, mean + hci
 
 # Ulf Olsson (2005) Confidence Intervals for the Mean of a Log-Normal Distribution, 
@@ -73,10 +73,10 @@ def ci_mean_lognormal(x, level=0.95):
     ln_mean = np.mean(y) + var_y / 2
     q = (level + 1) / 2
     ln_sem = np.sqrt(var_y / n + var_y**2 / 2 / (n - 1))
-    hci = stats.t.ppf(q, len(y)) * ln_sem
+    hci = stats.t.ppf(q, n - 1) * ln_sem
     return np.exp(ln_mean), np.exp(ln_mean - hci), np.exp(ln_mean + hci)
 
-def ci_mean_bootstrap(s, level=0.95, as_df=True):
+def ci_mean_bootstrap(s, level=0.95, as_df=True, seed=0):
     """Calculate mean and CI by bootstrap.
 
     Parameters
@@ -85,13 +85,16 @@ def ci_mean_bootstrap(s, level=0.95, as_df=True):
         Data.
     level : float
         Confidence level. Default 0.95.
+    seed : int, optional
+        Seed of the resampling. Pass None for a different result on every call.
 
     Returns
     -------
     (mean, min, max)
     """
-    bs = stats.bootstrap((s.dropna(),), np.mean, confidence_level=level, n_resamples=10_000)
-    mean = bs.bootstrap_distribution.mean()
+    s = s.dropna()
+    bs = stats.bootstrap((s,), np.mean, confidence_level=level, n_resamples=10_000, rng=np.random.default_rng(seed))
+    mean = s.mean()
     ci_l, ci_h = bs.confidence_interval.low, bs.confidence_interval.high
     if as_df:
         return pd.DataFrame([{'mean': mean, 'ci_l': ci_l, 'ci_h': ci_h}])

@@ -39,7 +39,7 @@ def correlate(rows, cols=None, kind='Spearman', data=None, plot=True):
             elif kind == 'Kendall':
                 r, p = stats.kendalltau(row[nona], col[nona])
             else:
-                r, p = 0, 0
+                raise ValueError(f"kind must be 'Pearson', 'Spearman' or 'Kendall', got {kind!r}")
             rr[row_n, col_n] = r
             pp[row_n, col_n] = p
     
@@ -81,6 +81,11 @@ def plot_correlation(var1, var2, kind='Pearson', data=None, xlabel=None, ylabel=
     elif kind == 'Spearman':
         r, p = stats.spearmanr(var1[nona], var2[nona])
         symbol = 'ϱ'
+    elif kind == 'Kendall':
+        r, p = stats.kendalltau(var1[nona], var2[nona])
+        symbol = 'τ'
+    else:
+        raise ValueError(f"kind must be 'Pearson', 'Spearman' or 'Kendall', got {kind!r}")
         
     if ploc is None:
         ploc = 'lower right' if r > 0 else 'lower left'
