@@ -30,7 +30,6 @@ else:
 
 
 def _jar_and_driver():
-    """Return the vendored JDBC jar path and the driver class it declares."""
     jars = glob.glob(os.path.join(_JAR_DIR, '*.jar'))
     if not jars:
         raise FileNotFoundError(f'No JDBC driver jar found in {_JAR_DIR}')
@@ -43,11 +42,6 @@ def _jar_and_driver():
 
 
 def _connect(server, url, user, password):
-    """Open an IRIS DB-API connection, resolving and caching credentials.
-
-    Uses the native driver (iris.dbapi) when NATIVE, else JDBC via the vendored
-    jar. `url` may be 'host:1972/NAMESPACE' or 'jdbc:IRIS://host:1972/NAMESPACE'.
-    """
     cached = _credentials.get(server, (None, None, None))
     env = os.getenv(f"ZLATOKOP_{server.upper()}", "").split() if server else []
     env += [None] * (3 - len(env))
@@ -56,12 +50,11 @@ def _connect(server, url, user, password):
         user     or cached[1] or env[1] or input('username: '),
         password or cached[2] or env[2] or getpass('password: '),
     )
-    host = re.sub(r'^jdbc:IRIS://', '', creds[0], flags=re.I)
     if NATIVE:
-        conn = iris.dbapi.connect(connectionstr=host, username=creds[1], password=creds[2])
+        conn = iris.dbapi.connect(connectionstr=creds[0], username=creds[1], password=creds[2])
     else:
         jar, driver = _jar_and_driver()
-        conn = jaydebeapi.connect(driver, f'jdbc:IRIS://{host}', [creds[1], creds[2]], jar)
+        conn = jaydebeapi.connect(driver, f'jdbc:IRIS://{creds[0]}', [creds[1], creds[2]], jar)
     _credentials[server] = creds
     return conn
 
