@@ -90,8 +90,8 @@ def read_sql(sql, server='analytics', parse_dates=None,
         the query is executed once and the result written to this path;
         subsequent calls load the file directly, bypassing the database. Delete
         the file to force a refresh. The query text is saved next to it as
-        `<cache>.sql`; a warning is issued when the cached result comes from
-        a different query.
+        `<cache>.sql`; when it differs from `sql`, the query is re-run and
+        the cache overwritten.
     **kwargs
         Passed to pandas.read_sql_query (on a cache miss only).
 
@@ -103,11 +103,11 @@ def read_sql(sql, server='analytics', parse_dates=None,
         ext = os.path.splitext(cache)[1].lower()
         if ext not in ('.csv', '.pkl', '.pickle'):
             raise ValueError(f"cache must end in .csv, .pkl or .pickle, got {cache!r}")
-        if os.path.exists(cache):
-            if os.path.exists(cache + '.sql'):
-                with open(cache + '.sql') as f:
-                    if f.read() != sql:
-                        warnings.warn(f'{cache} was produced by a different query. Delete it to refresh.')
+        stale = False
+        if os.path.exists(cache + '.sql'):
+            with open(cache + '.sql') as f:
+                stale = f.read() != sql
+        if os.path.exists(cache) and not stale:
             return pd.read_csv(cache, parse_dates=parse_dates) if ext == '.csv' else pd.read_pickle(cache)
     with _connect(server, url, user, password) as conn, warnings.catch_warnings():
         warnings.simplefilter('ignore')

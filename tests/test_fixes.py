@@ -1,4 +1,3 @@
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -118,19 +117,20 @@ def test_survplot_median_survival_with_quantile(surv_df):
     assert list(out.columns) == ['variable', 'group', 'median survival']
 
 
-def test_cache_warns_when_query_changed(tmp_path):
+def test_cache_refreshes_when_query_changed(tmp_path, monkeypatch):
+    import contextlib
+    from statistikem import sql as sql_mod
+    calls = []
+    monkeypatch.setattr(sql_mod, '_connect', lambda *a: contextlib.nullcontext())
+    monkeypatch.setattr(sql_mod.pd, 'read_sql_query', lambda q, conn, **kw: calls.append(q) or pd.DataFrame({'a': [len(calls)]}))
     cache = str(tmp_path / 'x.pkl')
-    pd.DataFrame({'a': [1]}).to_pickle(cache)
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        si.read_sql('SELECT 1', cache=cache)
-    with open(cache + '.sql', 'w') as f:
-        f.write('SELECT 1')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        si.read_sql('SELECT 1', cache=cache)
-    with pytest.warns(UserWarning, match='different query'):
-        si.read_sql('SELECT 2', cache=cache)
+    assert si.read_sql('SELECT 1', cache=cache)['a'].item() == 1
+    assert si.read_sql('SELECT 1', cache=cache)['a'].item() == 1
+    assert si.read_sql('SELECT 2', cache=cache)['a'].item() == 2
+    assert si.read_sql('SELECT 2', cache=cache)['a'].item() == 2
+    assert calls == ['SELECT 1', 'SELECT 2']
+    with open(cache + '.sql') as f:
+        assert f.read() == 'SELECT 2'
 
 
 def test_execute_sql_requires_server():
